@@ -74,6 +74,13 @@ This project is featured on cristianllanos.com. When tagging a release:
 
 The project's `docs/user/` is the staging area — updated during development. The website is production — only updated on release via `/project-site`.
 
+## Workflow
+
+- After completing each roadmap section, run `/simplify` to review and clean up the code before moving on
+- Before any release or commit, run a security audit (secrets, CSP, injection, .gitignore coverage) and fix all findings
+- Use agents for implementation work to preserve context; report short summaries
+- Parallelize independent work across agents when files don't conflict
+
 ## Phase 1 Implementation Order
 
 See ROADMAP.md for the numbered implementation sequence.
