@@ -80,6 +80,11 @@ The project's `docs/user/` is the staging area — updated during development. T
 - Before any release or commit, run a security audit (secrets, CSP, injection, .gitignore coverage) and fix all findings
 - Use agents for implementation work to preserve context; report short summaries
 - Parallelize independent work across agents when files don't conflict
+- When parallel agents must touch the same file, designate one as owner — the other exports its work for manual wiring after both complete
+- Always run a combined `pnpm tauri build` after merging parallel agent output to catch integration issues
+- If a component has early returns (loading/gating states) above hooks like `useVirtualizer`, split into a thin shell component + inner component to avoid React hooks-order violations
+- Batch features by dependency: independent items in parallel, dependent items sequential
+- Print `--- BATCH N DONE ---` markers when running multiple batches to track progress
 
 ## Phase 1 Implementation Order
 

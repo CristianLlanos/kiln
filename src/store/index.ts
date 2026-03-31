@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
-import type { Block, KilnConfig, Session, SessionMode, ShellIntegrationState, StyledSegment } from './types'
+import type { Block, CompletionItem, KilnConfig, SearchMatch, Session, SessionMode, ShellIntegrationState, StyledSegment } from './types'
 import { appendToLines } from '../utils/segmentLines'
 
 interface AppState {
@@ -20,9 +20,37 @@ interface AppState {
   shellState: ShellIntegrationState
   /** Application configuration loaded from config.toml */
   config: KilnConfig | null
+  /** Whether the command palette popup is open */
+  paletteOpen: boolean
+
+  // Autocomplete state
+  completions: CompletionItem[]
+  completionIndex: number
+  completionsVisible: boolean
+
+  // Search state
+  searchOpen: boolean
+  searchQuery: string
+  searchRegex: boolean
+  searchMatches: SearchMatch[]
+  searchCurrentIndex: number
 
   setShellState: (state: ShellIntegrationState) => void
   setConfig: (config: KilnConfig) => void
+
+  // Autocomplete actions
+  setCompletions: (items: CompletionItem[]) => void
+  setCompletionIndex: (index: number) => void
+  setCompletionsVisible: (visible: boolean) => void
+  dismissCompletions: () => void
+
+  // Search actions
+  setSearchOpen: (open: boolean) => void
+  setSearchQuery: (query: string) => void
+  setSearchRegex: (regex: boolean) => void
+  computeSearchMatches: () => void
+  nextMatch: () => void
+  prevMatch: () => void
 
   // Error handling
   setSessionError: (sessionId: string, error: string) => void
@@ -45,6 +73,14 @@ interface AppState {
   renameSession: (id: string, name: string) => void
   setSwitcherOpen: (open: boolean) => void
   toggleSwitcherRunningOnly: () => void
+
+  // Command history
+  pushHistory: (sessionId: string, command: string) => void
+  navigateHistory: (sessionId: string, direction: 'up' | 'down', currentInput: string) => string | null
+
+  // Command palette
+  setPaletteOpen: (open: boolean) => void
+  clearSessionOutput: () => void
 }
 
 /** Update a session by id, returning unchanged state if session not found. */
@@ -85,6 +121,32 @@ function bumpMRU(order: string[], id: string): string[] {
   return [id, ...order.filter((s) => s !== id)]
 }
 
+/**
+ * Trim oldest completed blocks from a session when total line count exceeds the limit.
+ * Never removes the currently running block.
+ */
+function trimScrollback(blocks: Block[], maxLines: number): Block[] {
+  let totalLines = 0
+  for (const block of blocks) {
+    totalLines += block.lines.length
+  }
+  if (totalLines <= maxLines) return blocks
+
+  // Remove oldest completed blocks from the front until under limit
+  let trimmed = blocks.slice()
+  while (totalLines > maxLines && trimmed.length > 1) {
+    const oldest = trimmed[0]
+    if (oldest.status === 'running') break
+    totalLines -= oldest.lines.length
+    trimmed = trimmed.slice(1)
+  }
+  return trimmed
+}
+
+/** Debounce timer for search computation */
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+const SEARCH_DEBOUNCE_MS = 100
+
 export const useStore = create<AppState>((set, get) => ({
   sessions: {},
   activeSessionId: null,
@@ -95,9 +157,134 @@ export const useStore = create<AppState>((set, get) => ({
   sessionCounter: 0,
   shellState: 'checking' as ShellIntegrationState,
   config: null,
+  paletteOpen: false,
+
+  // Autocomplete defaults
+  completions: [],
+  completionIndex: 0,
+  completionsVisible: false,
+
+  // Search defaults
+  searchOpen: false,
+  searchQuery: '',
+  searchRegex: false,
+  searchMatches: [],
+  searchCurrentIndex: 0,
 
   setShellState: (state) => set({ shellState: state }),
   setConfig: (config) => set({ config }),
+
+  // Autocomplete actions
+  setCompletions: (items) => set({ completions: items, completionIndex: 0, completionsVisible: items.length > 0 }),
+  setCompletionIndex: (index) => set({ completionIndex: index }),
+  setCompletionsVisible: (visible) => set({ completionsVisible: visible }),
+  dismissCompletions: () => set({ completions: [], completionIndex: 0, completionsVisible: false }),
+
+  // Search actions
+  setSearchOpen: (open) => {
+    if (open) {
+      set({ searchOpen: true })
+    } else {
+      set({ searchOpen: false, searchQuery: '', searchMatches: [], searchCurrentIndex: 0 })
+    }
+  },
+
+  setSearchQuery: (query) => {
+    set({ searchQuery: query })
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = setTimeout(() => get().computeSearchMatches(), SEARCH_DEBOUNCE_MS)
+  },
+
+  setSearchRegex: (regex) => {
+    set({ searchRegex: regex })
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = setTimeout(() => get().computeSearchMatches(), SEARCH_DEBOUNCE_MS)
+  },
+
+  computeSearchMatches: () => {
+    const state = get()
+    const { searchQuery, searchRegex, activeSessionId, sessions } = state
+    if (!searchQuery || !activeSessionId) {
+      set({ searchMatches: [], searchCurrentIndex: 0 })
+      return
+    }
+
+    const session = sessions[activeSessionId]
+    if (!session) {
+      set({ searchMatches: [], searchCurrentIndex: 0 })
+      return
+    }
+
+    let regex: RegExp
+    try {
+      regex = searchRegex
+        ? new RegExp(searchQuery, 'gi')
+        : new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    } catch {
+      // Invalid regex — clear matches
+      set({ searchMatches: [], searchCurrentIndex: 0 })
+      return
+    }
+
+    const matches: SearchMatch[] = []
+
+    for (const block of session.blocks) {
+      for (let lineIndex = 0; lineIndex < block.lines.length; lineIndex++) {
+        const lineSegments = block.lines[lineIndex]
+        // Build a flat string for the entire line so we can find matches that span segments
+        let lineText = ''
+        const segmentOffsets: { segmentIndex: number; start: number }[] = []
+        for (let si = 0; si < lineSegments.length; si++) {
+          segmentOffsets.push({ segmentIndex: si, start: lineText.length })
+          lineText += lineSegments[si].text
+        }
+
+        let match: RegExpExecArray | null
+        regex.lastIndex = 0
+        while ((match = regex.exec(lineText)) !== null) {
+          // Find which segment this match starts in
+          let segIdx = 0
+          let startInSeg = match.index
+          for (let s = segmentOffsets.length - 1; s >= 0; s--) {
+            if (segmentOffsets[s].start <= match.index) {
+              segIdx = segmentOffsets[s].segmentIndex
+              startInSeg = match.index - segmentOffsets[s].start
+              break
+            }
+          }
+          matches.push({
+            blockId: block.id,
+            lineIndex,
+            segmentIndex: segIdx,
+            startOffset: startInSeg,
+            length: match[0].length,
+          })
+          // Prevent infinite loop on zero-length matches
+          if (match[0].length === 0) regex.lastIndex++
+        }
+      }
+    }
+
+    // Try to keep the current index reasonable
+    const currentIndex = state.searchCurrentIndex >= matches.length ? 0 : state.searchCurrentIndex
+    set({ searchMatches: matches, searchCurrentIndex: currentIndex })
+  },
+
+  nextMatch: () => {
+    set((state) => {
+      if (state.searchMatches.length === 0) return state
+      return { searchCurrentIndex: (state.searchCurrentIndex + 1) % state.searchMatches.length }
+    })
+  },
+
+  prevMatch: () => {
+    set((state) => {
+      if (state.searchMatches.length === 0) return state
+      return {
+        searchCurrentIndex: (state.searchCurrentIndex - 1 + state.searchMatches.length) % state.searchMatches.length,
+      }
+    })
+  },
 
   // Error handling
   setSessionError: (sessionId, error) =>
@@ -131,7 +318,7 @@ export const useStore = create<AppState>((set, get) => ({
       return {
         sessions: {
           ...state.sessions,
-          [id]: { id, name: `Session ${nextCounter}`, blocks: [], mode: 'normal' },
+          [id]: { id, name: `Session ${nextCounter}`, blocks: [], mode: 'normal', commandHistory: [], historyIndex: -1, historyDraft: '' },
         },
         activeSessionId: id,
         sessionOrder: bumpMRU(state.sessionOrder, id),
@@ -161,7 +348,7 @@ export const useStore = create<AppState>((set, get) => ({
       blocks: [...session.blocks, block],
     }))),
 
-  appendSegments: (sessionId, blockId, segments) =>
+  appendSegments: (sessionId, blockId, segments) => {
     set((state) => updateBlock(state, sessionId, blockId, (b) => {
       const newSegments = [...b.segments, ...segments]
       const newLines = appendToLines(b.lines, segments)
@@ -169,7 +356,18 @@ export const useStore = create<AppState>((set, get) => ({
         segments: newSegments,
         lines: newLines,
       }
-    })),
+    }))
+
+    // Trim scrollback after new output arrives
+    const maxLines = get().config?.scrollback?.max_lines ?? 10000
+    const session = get().sessions[sessionId]
+    if (session) {
+      const trimmed = trimScrollback(session.blocks, maxLines)
+      if (trimmed !== session.blocks) {
+        set((state) => updateSession(state, sessionId, () => ({ blocks: trimmed })))
+      }
+    }
+  },
 
   completeBlock: (sessionId, blockId, exitCode, duration) =>
     set((state) => updateBlock(state, sessionId, blockId, () => ({
@@ -241,4 +439,72 @@ export const useStore = create<AppState>((set, get) => ({
 
   toggleSwitcherRunningOnly: () =>
     set((state) => ({ switcherRunningOnly: !state.switcherRunningOnly })),
+
+  // Command palette
+  setPaletteOpen: (open) => set({ paletteOpen: open }),
+
+  clearSessionOutput: () =>
+    set((state) => {
+      const { activeSessionId } = state
+      if (!activeSessionId) return state
+      return updateSession(state, activeSessionId, () => ({ blocks: [] }))
+    }),
+
+  // Command history
+  pushHistory: (sessionId, command) =>
+    set((state) => updateSession(state, sessionId, (session) => {
+      const history = session.commandHistory.slice()
+      // Don't add duplicates of the last entry
+      if (history.length === 0 || history[history.length - 1] !== command) {
+        history.push(command)
+      }
+      // Cap at 1000 entries
+      if (history.length > 1000) {
+        history.splice(0, history.length - 1000)
+      }
+      return { commandHistory: history, historyIndex: -1, historyDraft: '' }
+    })),
+
+  navigateHistory: (sessionId, direction, currentInput) => {
+    const state = get()
+    const session = state.sessions[sessionId]
+    if (!session || session.commandHistory.length === 0) return null
+
+    const history = session.commandHistory
+    let newIndex = session.historyIndex
+    let draft = session.historyDraft
+
+    if (direction === 'up') {
+      if (newIndex === -1) {
+        // Starting navigation — save current input as draft
+        draft = currentInput
+        newIndex = history.length - 1
+      } else if (newIndex > 0) {
+        newIndex--
+      } else {
+        // Already at oldest — don't change
+        return history[0]
+      }
+    } else {
+      // down
+      if (newIndex === -1) return null // Not navigating
+      if (newIndex < history.length - 1) {
+        newIndex++
+      } else {
+        // Past newest — return to draft
+        set((state) => updateSession(state, sessionId, () => ({
+          historyIndex: -1,
+          historyDraft: '',
+        })))
+        return draft
+      }
+    }
+
+    set((state) => updateSession(state, sessionId, () => ({
+      historyIndex: newIndex,
+      historyDraft: draft,
+    })))
+
+    return history[newIndex]
+  },
 }))

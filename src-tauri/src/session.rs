@@ -72,8 +72,10 @@ impl SessionManager {
             );
         }
 
-        // Auto-source shell integration into the new session
-        if let Ok(script_path) = shell_integration::install_zsh_integration() {
+        // Auto-source shell integration into the new session.
+        // Detect which shell is being used and source the matching script.
+        let shell_name = shell_integration::detect_shell();
+        if let Ok(script_path) = shell_integration::install_for_shell(&shell_name) {
             let source_cmd = format!("source \"{}\"\n", script_path);
             self.write_to_session(session_id, &source_cmd).ok();
         }

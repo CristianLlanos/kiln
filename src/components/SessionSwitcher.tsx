@@ -2,19 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useStore } from '../store'
 import type { Session } from '../store/types'
 import { hasRunningCommand, getLastBlock, formatTimeAgo } from '../utils/session'
-
-/** Simple fuzzy match: all filter chars must appear in haystack in order */
-function fuzzyMatch(haystack: string, needle: string): boolean {
-  const lower = haystack.toLowerCase()
-  const chars = needle.toLowerCase()
-  let hi = 0
-  for (let i = 0; i < chars.length; i++) {
-    const idx = lower.indexOf(chars[i], hi)
-    if (idx === -1) return false
-    hi = idx + 1
-  }
-  return true
-}
+import { fuzzyMatch } from '../utils/fuzzyMatch'
 
 export function SessionSwitcher() {
   const [filter, setFilter] = useState('')

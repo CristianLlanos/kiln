@@ -65,17 +65,20 @@ pub fn create_window(app_handle: tauri::AppHandle) -> Result<(), String> {
 pub struct ShellIntegrationStatus {
     installed: bool,
     script_path: String,
-    in_zshrc: bool,
+    in_rc: bool,
+    shell: String,
 }
 
 #[tauri::command]
-pub fn install_shell_integration() -> Result<ShellIntegrationStatus, String> {
-    let script_path = shell_integration::install_zsh_integration()?;
-    shell_integration::add_to_zshrc()?;
+pub fn install_shell_integration(shell: Option<String>) -> Result<ShellIntegrationStatus, String> {
+    let shell_name = shell.unwrap_or_else(|| shell_integration::detect_shell());
+    let script_path = shell_integration::install_for_shell(&shell_name)?;
+    shell_integration::add_to_rc_for_shell(&shell_name)?;
     Ok(ShellIntegrationStatus {
         installed: true,
         script_path,
-        in_zshrc: shell_integration::is_installed_in_zshrc(),
+        in_rc: shell_integration::is_installed_in_rc_for_shell(&shell_name),
+        shell: shell_name,
     })
 }
 
@@ -112,13 +115,15 @@ pub fn open_config() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn check_shell_integration() -> ShellIntegrationStatus {
-    let script_path = shell_integration::get_script_path()
+pub fn check_shell_integration(shell: Option<String>) -> ShellIntegrationStatus {
+    let shell_name = shell.unwrap_or_else(|| shell_integration::detect_shell());
+    let script_path = shell_integration::get_script_path_for_shell(&shell_name)
         .unwrap_or_default();
     let path = std::path::Path::new(&script_path);
     ShellIntegrationStatus {
         installed: !script_path.is_empty() && path.exists(),
         script_path,
-        in_zshrc: shell_integration::is_installed_in_zshrc(),
+        in_rc: shell_integration::is_installed_in_rc_for_shell(&shell_name),
+        shell: shell_name,
     }
 }

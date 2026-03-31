@@ -50,8 +50,8 @@ Input (React) → PTY (Rust, persistent shell) → Stream Parser (Rust) → Reac
 | Shell | Status    | Mechanism                          |
 |-------|-----------|------------------------------------|
 | zsh   | Phase 1   | `precmd` / `preexec` hooks         |
-| bash  | Phase 2   | `PROMPT_COMMAND` / `DEBUG` trap    |
-| fish  | Phase 2   | `fish_prompt` / `fish_preexec`     |
+| bash  | Phase 1   | `PROMPT_COMMAND` / `DEBUG` trap    |
+| fish  | Phase 1   | `fish_prompt` / `fish_preexec`     |
 
 ### Block Data Model
 
@@ -313,55 +313,55 @@ Build in this sequence — each step builds on the previous:
 17. **First release** — Tag v0.1.0, run `/project-site` to create Kiln pages on cristianllanos.com, run `/seo-audit`.
 
 ### Infrastructure
-- [ ] Tauri v2 project scaffold with Vite + React + TypeScript
-- [ ] Persistent PTY shell session via Rust backend (`portable-pty`)
-- [ ] Zsh shell integration script (OSC 133 markers via `precmd`/`preexec`)
-- [ ] Stream parser — detect OSC 133 block boundaries, alt screen, ANSI codes
-- [ ] ANSI escape sequence conversion to styled React output
-- [ ] Stream throttle — batch PTY output into 16ms frames before sending to frontend
-- [ ] Block buffer cap — truncate output beyond 50k lines (configurable), keep head + tail
-- [ ] Graceful degradation — fallback to xterm.js when shell integration is unavailable
+- [x] Tauri v2 project scaffold with Vite + React + TypeScript
+- [x] Persistent PTY shell session via Rust backend (`portable-pty`)
+- [x] Zsh shell integration script (OSC 133 markers via `precmd`/`preexec`)
+- [x] Stream parser — detect OSC 133 block boundaries, alt screen, ANSI codes
+- [x] ANSI escape sequence conversion to styled React output
+- [x] Stream throttle — batch PTY output into 16ms frames before sending to frontend
+- [x] Block buffer cap — truncate output beyond 50k lines (configurable), keep head + tail
+- [x] Graceful degradation — fallback to xterm.js when shell integration is unavailable
 
 ### Dual-Mode Rendering
-- [ ] Normal mode — render command output as styled React components in blocks
-- [ ] Virtualized block rendering — only viewport lines in the DOM (`react-window` or `@tanstack/virtual`)
-- [ ] Interactive mode — fullscreen xterm.js with raw PTY passthrough
-- [ ] Alt screen detection (`ESC[?1049h` / `ESC[?1049l`) for automatic mode switching
-- [ ] Seamless transition between modes
+- [x] Normal mode — render command output as styled React components in blocks
+- [x] Virtualized block rendering — only viewport lines in the DOM (`react-window` or `@tanstack/virtual`)
+- [x] Interactive mode — fullscreen xterm.js with raw PTY passthrough
+- [x] Alt screen detection (`ESC[?1049h` / `ESC[?1049l`) for automatic mode switching
+- [x] Seamless transition between modes
 
 ### UI Shell
-- [ ] Block-based output — each command+output as a distinct visual card
-- [ ] Fixed bottom input area (chat-style)
-- [ ] Thin header bar (app name, active session, shortcut hint)
-- [ ] Session switcher popup (`Cmd+E`) — fuzzy filter, keyboard-driven, JetBrains-style
-- [ ] Multiple windows support (`Cmd+N`) — each window with its own session pool
-- [ ] Kotlin-inspired dark theme
+- [x] Block-based output — each command+output as a distinct visual card
+- [x] Fixed bottom input area (chat-style)
+- [x] Thin header bar (app name, active session, shortcut hint)
+- [x] Session switcher popup (`Cmd+E`) — fuzzy filter, keyboard-driven, JetBrains-style
+- [x] Multiple windows support (`Cmd+N`) — each window with its own session pool
+- [x] Kotlin-inspired dark theme
 
 ### First-Run & Error Handling
-- [ ] Shell detection and welcome block with one-click integration install
-- [ ] Shell integration script deployed to `~/.config/kiln/shell/`
-- [ ] Graceful fallback to xterm.js when integration is missing or broken
-- [ ] PTY crash recovery — inline system message with restart/new session options
-- [ ] Tauri backend crash — error screen with restart action
+- [x] Shell detection and welcome block with one-click integration install
+- [x] Shell integration script deployed to `~/.config/kiln/shell/`
+- [x] Graceful fallback to xterm.js when integration is missing or broken
+- [x] PTY crash recovery — inline system message with restart/new session options
+- [x] Tauri backend crash — error screen with restart action
 
 ### Open Source
-- [ ] README.md — what Kiln is, screenshot/gif, quick start (clone, install, run)
-- [ ] CONTRIBUTING.md — dev environment setup, project structure, how to submit PRs
-- [ ] GitHub issue templates — bug report, feature request
-- [ ] LICENSE (MIT)
+- [x] README.md — what Kiln is, screenshot/gif, quick start (clone, install, run)
+- [x] CONTRIBUTING.md — dev environment setup, project structure, how to submit PRs
+- [x] GitHub issue templates — bug report, feature request
+- [x] LICENSE (MIT)
 
 ### User Documentation (`docs/user/`)
-- [ ] `getting-started.md` — install, first launch, shell integration setup
-- [ ] `shortcuts.md` — all keyboard shortcuts with descriptions
-- [ ] `configuration.md` — full config reference with examples
-- [ ] `sessions.md` — how sessions and windows work, switcher usage
+- [x] `getting-started.md` — install, first launch, shell integration setup
+- [x] `shortcuts.md` — all keyboard shortcuts with descriptions
+- [x] `configuration.md` — full config reference with examples
+- [x] `sessions.md` — how sessions and windows work, switcher usage
 
 Docs are part of the definition of done: every feature implementation must include corresponding doc updates.
 
 ### Configuration
-- [ ] TOML config file with hot-reload
-- [ ] Embedded default font (JetBrains Mono) with custom font override
-- [ ] Configurable keybindings
+- [x] TOML config file with hot-reload
+- [x] Embedded default font (JetBrains Mono) with custom font override
+- [x] Configurable keybindings
 
 Default config schema:
 
@@ -398,33 +398,32 @@ check_on_launch = true    # set false to disable
 ## Phase 2: High Value
 
 ### Build & Release
-- [ ] GitHub Actions CI — lint (eslint + clippy), test, build check on PR/push
-- [ ] Release pipeline via Tauri GitHub Action — tag triggers builds for all 3 platforms
+- [x] GitHub Actions CI — lint (eslint + clippy), test, build check on PR/push
+- [x] Release pipeline via Tauri GitHub Action — tag triggers builds for all 3 platforms
   - macOS ARM: `.dmg`
   - Windows: `.msi`
   - Linux: `.AppImage` / `.deb`
-- [ ] Tauri updater manifest auto-generated on release
-- [ ] Code signing (macOS + Windows) — when project gains traction
+- [x] Tauri updater manifest auto-generated on release
 
 ### Shell Integration
-- [ ] Bash shell integration (`PROMPT_COMMAND` / `DEBUG` trap)
-- [ ] Fish shell integration (`fish_prompt` / `fish_preexec`)
+- [x] Bash shell integration (`PROMPT_COMMAND` / `DEBUG` trap)
+- [x] Fish shell integration (`fish_prompt` / `fish_preexec`)
 
 ### Features
-- [ ] Rich output previews — toggle per block, raw output always available
+- [x] Rich output previews — toggle per block, raw output always available
   - JSON: syntax-highlighted, collapsible tree
   - Git diff: syntax-highlighted with +/- colors
   - CSV/TSV: rendered as a table
   - Markdown: rendered with toggle to raw
   - Column-aligned output (e.g. `docker ps`): cleaned up table
-- [ ] Search through output with regex support (DOM-native, fast)
-- [ ] Command palette (`Cmd+P` / `Ctrl+P`) — all actions discoverable
-- [ ] Clickable links/paths — detect URLs and file paths
-- [ ] Autocomplete — dropdown above input area, keyboard-navigable
+- [x] Search through output with regex support (DOM-native, fast)
+- [x] Command palette (`Cmd+P` / `Ctrl+P`) — all actions discoverable
+- [x] Clickable links/paths — detect URLs and file paths
+- [x] Autocomplete — dropdown above input area, keyboard-navigable
   - Source: `~/.zsh_history`, live session history, filesystem path completion (via Rust backend)
-- [ ] Modern text editing in input area (multi-line, syntax hints)
-- [ ] Scrollback (configurable, default 10,000 lines)
-- [ ] Copy enhancements — copy block output, copy as markdown, copy command only
+- [x] Modern text editing in input area (multi-line, syntax hints)
+- [x] Scrollback (configurable, default 10,000 lines)
+- [x] Copy enhancements — copy block output, copy as markdown, copy command only
 
 ## Phase 3: Nice to Have
 
@@ -437,6 +436,7 @@ check_on_launch = true    # set false to disable
 
 ## Future Exploration
 
+- Code signing (macOS + Windows) — add when distributing to non-technical users
 - Inline image rendering (sixel or iTerm2 protocol)
 
 ## Non-Goals

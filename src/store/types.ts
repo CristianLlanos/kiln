@@ -36,12 +36,19 @@ export interface Session {
   mode: SessionMode
   /** Set when the PTY crashes or shell process exits unexpectedly */
   sessionError?: string
+  /** Per-session command history (newest at end) */
+  commandHistory: string[]
+  /** Current index into commandHistory during navigation (-1 = not navigating) */
+  historyIndex: number
+  /** Draft input saved when user starts navigating history */
+  historyDraft: string
 }
 
 export interface ShellIntegrationStatus {
   installed: boolean
   script_path: string
-  in_zshrc: boolean
+  in_rc: boolean
+  shell: string
 }
 
 export type ShellIntegrationState = 'checking' | 'pending' | 'installed' | 'skipped'
@@ -84,4 +91,25 @@ export interface KilnConfig {
   scrollback: ScrollbackConfig
   performance: PerformanceConfig
   keybindings: KeybindingsConfig
+}
+
+// ── Search types ────────────────────────────────────────────────────────────
+
+export interface SearchMatch {
+  blockId: string
+  lineIndex: number
+  segmentIndex: number
+  startOffset: number
+  length: number
+}
+
+// ── Content detection types ────────────────────────────────────────────────
+
+export type ContentType = 'json' | 'diff' | 'csv' | 'tsv' | 'markdown' | 'table' | null
+
+// ── Autocomplete types ────────────────────────────────────────────────────
+
+export interface CompletionItem {
+  text: string
+  kind: 'file' | 'directory' | 'history'
 }

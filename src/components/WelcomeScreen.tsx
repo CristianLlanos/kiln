@@ -11,15 +11,15 @@ export function WelcomeScreen() {
   const setShellState = useStore((s) => s.setShellState)
   const createNewSession = useStore((s) => s.createNewSession)
 
-  const scriptPath = '~/.config/kiln/shell/kiln.zsh'
-  const sourceLine = `source "${scriptPath}"`
+  const scriptPath = '~/.config/kiln/shell/kiln.{zsh,bash,fish}'
+  const sourceLine = `source "~/.config/kiln/shell/kiln.<shell>"`
 
   const handleInstall = async () => {
     setInstalling(true)
     setError(null)
     try {
       const status = await invoke<ShellIntegrationStatus>('install_shell_integration')
-      if (status.installed && status.in_zshrc) {
+      if (status.installed && status.in_rc) {
         setShellState('installed')
       }
       await createNewSession()

@@ -5,11 +5,15 @@ import { useStore } from './store'
 import { useActiveSessionBlocks, useActiveSessionMode, useActiveSessionName, useActiveSessionError } from './hooks/useActiveSession'
 import { useTauriEvents } from './hooks/useTauriEvents'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useCompletions } from './hooks/useCompletions'
 import { InteractiveMode } from './components/InteractiveMode'
 import { BlockComponent } from './components/BlockComponent'
+import { Autocomplete } from './components/Autocomplete'
 import { SessionSwitcher } from './components/SessionSwitcher'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import { SystemMessage } from './components/SystemMessage'
+import { Search } from './components/Search'
+import { CommandPalette } from './components/CommandPalette'
 import type { KilnConfig, ShellIntegrationStatus } from './store/types'
 
 function Header() {
@@ -147,7 +151,7 @@ export default function App() {
     async function checkIntegration() {
       try {
         const status = await invoke<ShellIntegrationStatus>('check_shell_integration')
-        const fullyInstalled = status.installed && status.in_zshrc
+        const fullyInstalled = status.installed && status.in_rc
         if (fullyInstalled) {
           setShellState('installed')
           await createNewSession()
@@ -176,17 +180,47 @@ export default function App() {
 function MainView() {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const isAutoScrolling = useRef(false)
 
   const activeSessionId = useStore((s) => s.activeSessionId)
   const setPendingCommand = useStore((s) => s.setPendingCommand)
+  const pushHistory = useStore((s) => s.pushHistory)
+  const navigateHistory = useStore((s) => s.navigateHistory)
   const switcherOpen = useStore((s) => s.switcherOpen)
+  const paletteOpen = useStore((s) => s.paletteOpen)
+  const searchOpen = useStore((s) => s.searchOpen)
+
+  const completions = useStore((s) => s.completions)
+  const completionsVisible = useStore((s) => s.completionsVisible)
+  const completionIndex = useStore((s) => s.completionIndex)
+  const setCompletionIndex = useStore((s) => s.setCompletionIndex)
+  const dismissCompletions = useStore((s) => s.dismissCompletions)
 
   const blocks = useActiveSessionBlocks()
   const sessionMode = useActiveSessionMode()
   const sessionError = useActiveSessionError()
+
+  // Detect if a command is currently running
+  const isCommandRunning = blocks.length > 0 && blocks[blocks.length - 1].status === 'running'
+
+  // Get cwd from the most recent block for filesystem completions
+  const lastCwd = blocks.length > 0 ? blocks[blocks.length - 1].cwd : '~'
+
+  // Autocomplete hook — only active when not running a command
+  useCompletions(isCommandRunning ? '' : input, lastCwd)
+
+  // Auto-resize textarea
+  const resizeTextarea = useCallback(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const lineHeight = 20 // approximate line height for text-sm monospace
+    const maxHeight = lineHeight * 6
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [])
 
   // Block list virtualizer
   const blockVirtualizer = useVirtualizer({
@@ -229,19 +263,72 @@ function MainView() {
     }
   }, [])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  // Accept a completion at the given index, inserting at cursor position
+  const acceptCompletion = useCallback((index?: number) => {
+    const idx = index ?? completionIndex
+    const item = completions[idx]
+    if (!item) return
+
+    const el = inputRef.current
+    if (!el) {
+      setInput(item.text)
+      dismissCompletions()
+      return
+    }
+
+    if (item.kind === 'history') {
+      // History completions replace the entire input
+      setInput(item.text)
+    } else {
+      // Filesystem completions: replace the last path-like token
+      const cursorPos = el.selectionStart ?? input.length
+      const textBefore = input.substring(0, cursorPos)
+      const textAfter = input.substring(cursorPos)
+
+      // Find the start of the last token before cursor
+      const lastSpace = textBefore.lastIndexOf(' ')
+      const tokenStart = lastSpace + 1
+      const newText = textBefore.substring(0, tokenStart) + item.text + textAfter
+      setInput(newText)
+
+      // Set cursor position after the inserted text
+      requestAnimationFrame(() => {
+        const newCursorPos = tokenStart + item.text.length
+        el.setSelectionRange(newCursorPos, newCursorPos)
+      })
+    }
+
+    dismissCompletions()
+    requestAnimationFrame(resizeTextarea)
+  }, [completions, completionIndex, input, dismissCompletions, resizeTextarea])
+
+  // Listen for click-based completion acceptance
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      acceptCompletion(detail.index)
+    }
+    window.addEventListener('kiln:accept-completion', handler)
+    return () => window.removeEventListener('kiln:accept-completion', handler)
+  }, [acceptCompletion])
+
+  const handleSubmit = async () => {
     if (!input.trim() || !activeSessionId) return
 
+    const command = input.trim()
     // Store the command so block_start can pick it up
-    setPendingCommand(activeSessionId, input.trim())
+    setPendingCommand(activeSessionId, command)
+    pushHistory(activeSessionId, command)
 
+    dismissCompletions()
     await invoke('execute_command', {
       sessionId: activeSessionId,
       command: input,
     })
     setInput('')
     setAutoScroll(true)
+    // Reset textarea height after clearing
+    requestAnimationFrame(resizeTextarea)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -251,14 +338,112 @@ function MainView() {
         sessionId: activeSessionId,
         data: '\x03',
       })
+      return
     }
+
+    // Autocomplete keyboard handling (when completions are visible)
+    if (completionsVisible && completions.length > 0) {
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        acceptCompletion()
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setCompletionIndex((completionIndex + 1) % completions.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setCompletionIndex((completionIndex - 1 + completions.length) % completions.length)
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        acceptCompletion()
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        dismissCompletions()
+        return
+      }
+    }
+
+    // When a command is running, send keystrokes to PTY
+    if (isCommandRunning && activeSessionId) {
+      // Allow Cmd/Ctrl combos to pass through (copy, paste, etc.)
+      if (e.metaKey || e.ctrlKey) return
+
+      e.preventDefault()
+      if (e.key === 'Enter') {
+        invoke('write_stdin', { sessionId: activeSessionId, data: '\n' })
+      } else if (e.key === 'Backspace') {
+        invoke('write_stdin', { sessionId: activeSessionId, data: '\x7f' })
+      } else if (e.key === 'Tab') {
+        invoke('write_stdin', { sessionId: activeSessionId, data: '\t' })
+      } else if (e.key === 'Escape') {
+        invoke('write_stdin', { sessionId: activeSessionId, data: '\x1b' })
+      } else if (e.key.length === 1) {
+        invoke('write_stdin', { sessionId: activeSessionId, data: e.key })
+      }
+      return
+    }
+
+    // Enter submits (without shift)
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSubmit()
+      return
+    }
+
+    // History navigation with up/down arrows
+    if (e.key === 'ArrowUp' && activeSessionId) {
+      // Only navigate history when cursor is on the first line
+      const el = inputRef.current
+      if (el) {
+        const textBeforeCursor = el.value.substring(0, el.selectionStart ?? 0)
+        if (textBeforeCursor.includes('\n')) return // cursor not on first line
+      }
+      e.preventDefault()
+      const result = navigateHistory(activeSessionId, 'up', input)
+      if (result !== null) {
+        setInput(result)
+        requestAnimationFrame(resizeTextarea)
+      }
+      return
+    }
+
+    if (e.key === 'ArrowDown' && activeSessionId) {
+      // Only navigate history when cursor is on the last line
+      const el = inputRef.current
+      if (el) {
+        const textAfterCursor = el.value.substring(el.selectionEnd ?? el.value.length)
+        if (textAfterCursor.includes('\n')) return // cursor not on last line
+      }
+      e.preventDefault()
+      const result = navigateHistory(activeSessionId, 'down', input)
+      if (result !== null) {
+        setInput(result)
+        requestAnimationFrame(resizeTextarea)
+      }
+      return
+    }
+  }
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value)
+    resizeTextarea()
   }
 
   const isTerminalMode = sessionMode === 'interactive' || sessionMode === 'fallback'
 
   return (
-    <div className="flex flex-col h-full" onKeyDown={handleKeyDown}>
+    <div className="flex flex-col h-full">
       <Header />
+
+      {/* Search bar — between header and content */}
+      {searchOpen && !isTerminalMode && <Search />}
 
       {isTerminalMode && activeSessionId ? (
         /* Interactive / Fallback: fullscreen xterm.js */
@@ -318,25 +503,29 @@ function MainView() {
             </button>
           )}
 
-          <form
-            onSubmit={handleSubmit}
-            className="border-t border-border bg-surface p-3 shrink-0"
-          >
-            <input
+          <div className="border-t border-border bg-surface p-3 shrink-0 relative">
+            {!isCommandRunning && <Autocomplete />}
+            <textarea
               ref={inputRef}
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a command..."
+              value={isCommandRunning ? '' : input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder={isCommandRunning ? 'Input goes to running process...' : 'Type a command...'}
               autoFocus
-              className="w-full bg-surface-raised border border-border rounded px-3 py-2 text-text-primary placeholder:text-text-secondary text-sm outline-none focus:border-accent font-mono"
+              rows={1}
+              className={`w-full bg-surface-raised border border-border rounded px-3 py-2 text-sm outline-none focus:border-accent font-mono resize-none overflow-hidden ${
+                isCommandRunning
+                  ? 'text-text-secondary placeholder:text-text-secondary/70'
+                  : 'text-text-primary placeholder:text-text-secondary'
+              }`}
             />
-          </form>
+          </div>
         </>
       )}
 
       {/* Session Switcher overlay */}
       {switcherOpen && <SessionSwitcher />}
+      {paletteOpen && <CommandPalette />}
     </div>
   )
 }

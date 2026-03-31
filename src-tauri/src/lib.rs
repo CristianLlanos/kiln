@@ -1,4 +1,5 @@
 mod commands;
+mod completions;
 pub mod config;
 mod parser;
 mod session;
@@ -24,6 +25,8 @@ pub fn run() {
             commands::create_window,
             commands::get_config,
             commands::open_config,
+            completions::get_completions,
+            completions::get_history_completions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

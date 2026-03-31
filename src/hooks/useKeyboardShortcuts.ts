@@ -53,6 +53,14 @@ export function useKeyboardShortcuts() {
         return
       }
 
+      // Cmd+F / Ctrl+F — toggle search
+      if (mod && e.key === 'f' && !e.shiftKey) {
+        e.preventDefault()
+        const store = useStore.getState()
+        store.setSearchOpen(!store.searchOpen)
+        return
+      }
+
       // Cmd+W / Ctrl+W — close active session
       if (mod && e.key === 'w' && !e.shiftKey) {
         e.preventDefault()
@@ -60,6 +68,14 @@ export function useKeyboardShortcuts() {
         if (store.activeSessionId) {
           store.closeSession(store.activeSessionId)
         }
+        return
+      }
+
+      // Cmd+P / Ctrl+P — toggle command palette
+      if (mod && e.key === 'p' && !e.shiftKey) {
+        e.preventDefault()
+        const store = useStore.getState()
+        store.setPaletteOpen(!store.paletteOpen)
         return
       }
     }
