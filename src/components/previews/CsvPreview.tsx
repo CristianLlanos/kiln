@@ -1,9 +1,39 @@
 import { memo, useMemo } from 'react'
 import { DataTable } from './DataTable'
 
+function parseCsvRow(line: string, delimiter: string): string[] {
+  const cells: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"'
+          i++ // skip escaped quote
+        } else {
+          inQuotes = false
+        }
+      } else {
+        current += ch
+      }
+    } else if (ch === '"') {
+      inQuotes = true
+    } else if (ch === delimiter) {
+      cells.push(current.trim())
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  cells.push(current.trim())
+  return cells
+}
+
 function parseCsvRows(text: string, delimiter: string): string[][] {
-  const lines = text.split('\n').filter((l) => l.trim().length > 0)
-  return lines.map((line) => line.split(delimiter).map((cell) => cell.trim()))
+  return text.split('\n').filter((l) => l.trim().length > 0).map((line) => parseCsvRow(line, delimiter))
 }
 
 export const CsvPreview = memo(function CsvPreview({

@@ -4,25 +4,11 @@ import { useStore } from '../store'
 import type { CompletionItem } from '../store/types'
 
 /**
- * Determines whether a token looks like a filesystem path.
- * Returns the path-like token if found, or null.
+ * Extract the last whitespace-delimited token from input.
  */
-function extractPathToken(input: string): string | null {
-  // Get the last whitespace-delimited token
+function extractLastToken(input: string): string {
   const tokens = input.split(/\s+/)
-  const last = tokens[tokens.length - 1]
-  if (!last) return null
-
-  if (
-    last.startsWith('/') ||
-    last.startsWith('./') ||
-    last.startsWith('../') ||
-    last.startsWith('~/')  ||
-    last === '~'
-  ) {
-    return last
-  }
-  return null
+  return tokens[tokens.length - 1] ?? ''
 }
 
 export function useCompletions(input: string, cwd: string) {
@@ -45,60 +31,71 @@ export function useCompletions(input: string, cwd: string) {
       return
     }
 
-    const pathToken = extractPathToken(value)
     const results: CompletionItem[] = []
+    const lastToken = extractLastToken(value)
 
-    if (pathToken) {
-      // Filesystem completion
+    // Always try filesystem completions for the last token (bare names in cwd)
+    if (lastToken) {
       try {
         const fsResults = await invoke<CompletionItem[]>('get_completions', {
-          partial: pathToken,
+          partial: lastToken,
           cwd,
         })
         results.push(...fsResults)
       } catch (e) {
         console.error('Filesystem completion failed:', e)
       }
-    } else {
-      // History completion: session history first, then shell history
-      if (commandHistory) {
-        const valueLower = value.toLowerCase()
-        const sessionMatches = new Set<string>()
+    }
 
-        // Walk session history newest-first
-        for (let i = commandHistory.length - 1; i >= 0; i--) {
-          const cmd = commandHistory[i]
-          if (cmd.toLowerCase().startsWith(valueLower) && cmd !== value) {
-            if (!sessionMatches.has(cmd)) {
-              sessionMatches.add(cmd)
-              results.push({ text: cmd, kind: 'history' })
-            }
-            if (results.length >= 5) break
-          }
+    // Always include history completions
+    if (commandHistory) {
+      const valueLower = value.toLowerCase()
+      const existing = new Set(results.map((r) => r.text))
+      let added = 0
+
+      // Walk session history newest-first
+      for (let i = commandHistory.length - 1; i >= 0; i--) {
+        const cmd = commandHistory[i]
+        if (cmd.toLowerCase().startsWith(valueLower) && cmd !== value && !existing.has(cmd)) {
+          existing.add(cmd)
+          results.push({ text: cmd, kind: 'history' })
+          added++
+          if (added >= 5) break
         }
       }
+    }
 
-      // Shell history from Rust backend
-      try {
-        const histResults = await invoke<CompletionItem[]>('get_history_completions', {
-          partial: value,
-        })
-        // Deduplicate against session results
-        const existing = new Set(results.map((r) => r.text))
-        for (const item of histResults) {
-          if (!existing.has(item.text) && item.text !== value) {
-            results.push(item)
-            if (results.length >= 15) break
-          }
+    // Shell history from Rust backend
+    try {
+      const histResults = await invoke<CompletionItem[]>('get_history_completions', {
+        partial: value,
+      })
+      const existing = new Set(results.map((r) => r.text))
+      for (const item of histResults) {
+        if (!existing.has(item.text) && item.text !== value) {
+          results.push(item)
+          if (results.length >= 15) break
         }
-      } catch (e) {
-        console.error('History completion failed:', e)
       }
+    } catch (e) {
+      console.error('History completion failed:', e)
+    }
+
+    // Cap total results
+    const capped = results.slice(0, 15)
+
+    // If the only results exactly match the input, don't show completions
+    // (user already has the right text — no point showing a dropdown)
+    const currentToken = (value.split(/\s+/).pop() ?? '')
+    const filtered = capped.filter((c) => c.text !== currentToken)
+    if (filtered.length === 0 && capped.length > 0) {
+      dismissCompletions()
+      return
     }
 
     // Only update if input hasn't changed while we were fetching
     if (lastInputRef.current === value) {
-      setCompletions(results)
+      setCompletions(capped)
     }
   }, [cwd, commandHistory, setCompletions, dismissCompletions])
 

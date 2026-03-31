@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useStore } from '../store'
+import { toggleInteractiveMode } from '../utils/interactive'
 
 /**
  * Global keyboard shortcuts for Kiln.
@@ -39,17 +40,24 @@ export function useKeyboardShortcuts() {
         return
       }
 
+      // Cmd+T / Ctrl+T — new session
+      if (mod && !e.shiftKey && e.key === 't') {
+        e.preventDefault()
+        useStore.getState().createNewSession()
+        return
+      }
+
+      // Cmd+Shift+N / Ctrl+Shift+N — new session (alternative)
+      if (mod && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+        e.preventDefault()
+        useStore.getState().createNewSession()
+        return
+      }
+
       // Cmd+N / Ctrl+N — new window
       if (mod && !e.shiftKey && e.key === 'n') {
         e.preventDefault()
         invoke('create_window').catch(console.error)
-        return
-      }
-
-      // Cmd+Shift+N / Ctrl+Shift+N — new session
-      if (mod && e.shiftKey && e.key === 'N') {
-        e.preventDefault()
-        useStore.getState().createNewSession()
         return
       }
 
@@ -76,6 +84,28 @@ export function useKeyboardShortcuts() {
         e.preventDefault()
         const store = useStore.getState()
         store.setPaletteOpen(!store.paletteOpen)
+        return
+      }
+
+      // Ctrl+L — clear session output (standard terminal keybinding)
+      if (e.ctrlKey && e.key === 'l' && !e.metaKey && !e.shiftKey) {
+        e.preventDefault()
+        useStore.getState().clearSessionOutput()
+        return
+      }
+
+      // Cmd+I / Ctrl+I — toggle interactive mode
+      if (mod && e.key === 'i' && !e.shiftKey) {
+        e.preventDefault()
+        const sid = useStore.getState().activeSessionId
+        if (sid) toggleInteractiveMode(sid)
+        return
+      }
+
+      // F2 — rename active session
+      if (e.key === 'F2') {
+        e.preventDefault()
+        useStore.getState().setTriggerRename(true)
         return
       }
     }

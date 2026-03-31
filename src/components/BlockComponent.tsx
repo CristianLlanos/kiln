@@ -1,14 +1,44 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../store'
 import type { Block, ContentType, SearchMatch, SegmentStyle, StyledSegment } from '../store/types'
+import { invoke } from '@tauri-apps/api/core'
 import { detectLinks, type DetectedLink } from '../utils/linkDetector'
 import { copyBlockOutput, copyBlockCommand, copyBlockAsMarkdown } from '../utils/clipboard'
 import { detectContentType, getBlockPlainText } from '../utils/contentDetector'
-import { JsonPreview, DiffPreview, CsvPreview, MarkdownPreview, TablePreview } from './previews'
+import { formatTimeAgo, formatAbsoluteTime } from '../utils/session'
+import { JsonPreview, DiffPreview, CsvPreview, MarkdownPreview, TablePreview, SqlPreview, YamlPreview } from './previews'
 
 const LINE_HEIGHT = 20
 const VIRTUALIZE_THRESHOLD = 100
+
+/** Shared 30s tick for all RelativeTimestamp instances — one interval, not N. */
+let tickListeners = new Set<() => void>()
+let tickInterval: ReturnType<typeof setInterval> | null = null
+
+function subscribeTimestampTick(cb: () => void) {
+  tickListeners.add(cb)
+  if (!tickInterval) {
+    tickInterval = setInterval(() => tickListeners.forEach((fn) => fn()), 30_000)
+  }
+  return () => {
+    tickListeners.delete(cb)
+    if (tickListeners.size === 0 && tickInterval) {
+      clearInterval(tickInterval)
+      tickInterval = null
+    }
+  }
+}
+
+function RelativeTimestamp({ timestamp }: { timestamp: number }) {
+  const [, setTick] = useState(0)
+  useEffect(() => subscribeTimestampTick(() => setTick((t) => t + 1)), [])
+  return (
+    <span className="text-text-secondary/50 shrink-0" title={formatAbsoluteTime(timestamp)}>
+      {formatTimeAgo(timestamp)}
+    </span>
+  )
+}
 
 function segmentToStyle(style: SegmentStyle): React.CSSProperties | undefined {
   if (!style.fg && !style.bg && !style.bold && !style.italic && !style.underline && !style.dim) {
@@ -164,7 +194,7 @@ function handleLinkClick(e: React.MouseEvent, link: DetectedLink) {
   e.preventDefault()
   e.stopPropagation()
   if (link.type === 'url') {
-    window.open(link.href, '_blank')
+    invoke('open_url', { url: link.href }).catch(console.error)
   } else {
     // File path: copy to clipboard
     navigator.clipboard.writeText(link.href)
@@ -213,17 +243,31 @@ function renderSegmentWithLinks(
 
 // ── Line rendering ──────────────────────────────────────────────────────────
 
+const TRUNCATION_RE = /^\[\s*\.{3}\s*\d+\s+lines?\s+truncated\s*\.{3}\s*\]$/
+
 function LineSegments({ segments }: { segments: StyledSegment[] }) {
   if (segments.length === 0) {
     return <>{'\u200B'}</>
   }
 
+  const fullText = segments.map((s) => s.text).join('')
+
+  // Render truncation markers as a distinct banner
+  if (TRUNCATION_RE.test(fullText.trim())) {
+    return (
+      <div className="my-3 mx-2 flex items-center gap-3 text-xs text-text-secondary select-none">
+        <div className="flex-1 h-px bg-border" />
+        <span className="px-3 py-1 rounded-full bg-surface-raised border border-border text-text-secondary/80">
+          {fullText.trim()}
+        </span>
+        <div className="flex-1 h-px bg-border" />
+      </div>
+    )
+  }
+
   const nodes: React.ReactNode[] = []
   let nodeKey = 0
   let charOffset = 0
-
-  // Build full line text once, detect links once per line
-  const fullText = segments.map((s) => s.text).join('')
   const lineLinks = detectLinks(fullText)
 
   for (const seg of segments) {
@@ -278,6 +322,7 @@ function VirtualizedLines({ lines, blockId }: { lines: StyledSegment[][]; blockI
     getScrollElement: () => parentRef.current,
     estimateSize: () => LINE_HEIGHT,
     overscan: 20,
+    measureElement: (el) => el.getBoundingClientRect().height,
   })
 
   const maxHeight = 400
@@ -291,7 +336,7 @@ function VirtualizedLines({ lines, blockId }: { lines: StyledSegment[][]; blockI
       style={{ height: containerHeight }}
     >
       <pre
-        className="text-sm leading-relaxed whitespace-pre-wrap break-all font-mono relative"
+        className="text-sm leading-relaxed whitespace-pre-wrap break-words font-mono relative"
         style={{ height: totalSize }}
       >
         {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -303,9 +348,10 @@ function VirtualizedLines({ lines, blockId }: { lines: StyledSegment[][]; blockI
           return (
             <div
               key={virtualRow.index}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
               className="absolute left-0 right-0"
               style={{
-                height: LINE_HEIGHT,
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
@@ -328,7 +374,7 @@ function SimpleLines({ lines, blockId }: { lines: StyledSegment[][]; blockId: st
   const searchCurrentIndex = useStore((s) => s.searchCurrentIndex)
 
   return (
-    <pre className="px-4 text-sm leading-relaxed whitespace-pre-wrap break-all font-mono">
+    <pre className="px-4 text-sm leading-relaxed whitespace-pre-wrap break-words font-mono">
       {lines.map((lineSegments, lineIdx) => {
         const highlights = searchOpen
           ? getLineHighlights(blockId, lineIdx, searchMatches, searchCurrentIndex, lineSegments)
@@ -352,11 +398,24 @@ function SimpleLines({ lines, blockId }: { lines: StyledSegment[][]; blockId: st
 
 const COPY_FEEDBACK_MS = 1500
 
+function Tooltip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="relative group/tip">
+      {children}
+      <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 rounded text-[10px] leading-tight whitespace-nowrap bg-surface-raised border border-border text-text-primary shadow-lg opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150 z-50">
+        {text}
+      </span>
+    </span>
+  )
+}
+
 function CopyButton({
   label,
+  tooltip,
   onClick,
 }: {
   label: string
+  tooltip: string
   onClick: () => Promise<string>
 }) {
   const [copied, setCopied] = useState(false)
@@ -372,13 +431,15 @@ function CopyButton({
   }, [onClick])
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className="px-1.5 py-0.5 rounded text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors text-[10px] leading-tight whitespace-nowrap"
-    >
-      {copied ? 'Copied!' : label}
-    </button>
+    <Tooltip text={tooltip}>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="px-1.5 py-0.5 rounded text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors text-[10px] leading-tight whitespace-nowrap"
+      >
+        {copied ? 'Copied!' : label}
+      </button>
+    </Tooltip>
   )
 }
 
@@ -389,9 +450,9 @@ function BlockActions({ block }: { block: Block }) {
 
   return (
     <div className="flex items-center gap-0.5">
-      <CopyButton label="Copy Output" onClick={onCopyOutput} />
-      <CopyButton label="Copy Command" onClick={onCopyCommand} />
-      <CopyButton label="Copy as Markdown" onClick={onCopyMarkdown} />
+      <CopyButton label="Output" tooltip="Copy command output" onClick={onCopyOutput} />
+      <CopyButton label="Cmd" tooltip="Copy command text" onClick={onCopyCommand} />
+      <CopyButton label="MD" tooltip="Copy as Markdown" onClick={onCopyMarkdown} />
     </div>
   )
 }
@@ -412,6 +473,10 @@ function PreviewRenderer({ contentType, text }: { contentType: ContentType; text
       return <MarkdownPreview text={text} />
     case 'table':
       return <TablePreview text={text} />
+    case 'sql':
+      return <SqlPreview text={text} />
+    case 'yaml':
+      return <YamlPreview text={text} />
     default:
       return null
   }
@@ -425,17 +490,19 @@ function PreviewToggle({
   onToggle: () => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`px-1.5 py-0.5 rounded text-[10px] leading-tight whitespace-nowrap transition-colors ${
-        showPreview
-          ? 'bg-accent/20 text-accent'
-          : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
-      }`}
-    >
-      {showPreview ? 'Raw' : 'Preview'}
-    </button>
+    <Tooltip text={showPreview ? 'Show raw output' : 'Show rich preview'}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`px-1.5 py-0.5 rounded text-[10px] leading-tight whitespace-nowrap transition-colors ${
+          showPreview
+            ? 'bg-accent/20 text-accent'
+            : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+        }`}
+      >
+        {showPreview ? 'Raw' : 'Preview'}
+      </button>
+    </Tooltip>
   )
 }
 
@@ -443,50 +510,54 @@ function PreviewToggle({
 
 export const BlockComponent = memo(function BlockComponent({ block }: { block: Block }) {
   const { color: statusColor, icon: statusIcon } = STATUS_DISPLAY[block.status]
-  const [showPreview, setShowPreview] = useState(false)
+  const config = useStore((s) => s.config)
+  const previewsEnabled = config?.appearance?.previews ?? true
+  const [showPreview, setShowPreview] = useState<boolean | null>(null)
 
-  const contentType = useMemo(() => detectContentType(block.lines), [block.lines])
+  const contentType = useMemo(() => detectContentType(block.lines, block.command), [block.lines, block.command])
+
+  // Default showPreview to true when content type detected and previews enabled
+  const effectiveShowPreview = showPreview ?? (previewsEnabled && contentType !== null)
   const plainText = useMemo(
-    () => (showPreview && contentType ? getBlockPlainText(block.lines) : ''),
-    [showPreview, contentType, block.lines],
+    () => (effectiveShowPreview && contentType ? getBlockPlainText(block.lines) : ''),
+    [effectiveShowPreview, contentType, block.lines],
   )
 
-  const togglePreview = useCallback(() => setShowPreview((p) => !p), [])
+  const togglePreview = useCallback(() => setShowPreview((p) => !(p ?? (previewsEnabled && contentType !== null))), [previewsEnabled, contentType])
 
   const useVirtualization = block.lines.length > VIRTUALIZE_THRESHOLD
 
   return (
     <div className="group border-b border-border py-3" data-block-id={block.id}>
       {/* Block header */}
-      <div className="flex items-center gap-2 px-4 pb-1 text-xs">
+      <div className="flex items-center gap-2 px-4 pb-2 pt-1 text-xs">
         <span className={statusColor}>{statusIcon}</span>
-        <span className="font-mono font-semibold text-text-primary">
+        <span className="font-mono font-semibold text-text-primary truncate min-w-0 text-sm">
           {block.command || '…'}
         </span>
-        <span className="ml-auto" />
-        {block.cwd && (
-          <span className="text-text-secondary">{block.cwd}</span>
+        <span className="ml-auto shrink-0" />
+        {/* Action buttons + preview toggle — visible on hover */}
+        <span className="opacity-0 group-hover:opacity-100 touch:opacity-100 transition-opacity flex items-center gap-0.5 shrink-0">
+          <BlockActions block={block} />
+          {contentType && (
+            <PreviewToggle showPreview={effectiveShowPreview} onToggle={togglePreview} />
+          )}
+        </span>
+        {block.timestamp > 0 && (
+          <RelativeTimestamp timestamp={block.timestamp} />
         )}
         {block.duration !== undefined && (
-          <span className="text-text-secondary">
+          <span className="text-text-secondary shrink-0">
             {block.duration < 1
               ? `${Math.round(block.duration * 1000)}ms`
               : `${block.duration.toFixed(1)}s`}
           </span>
         )}
-        {/* Preview toggle — only shown when content type is detected */}
-        {contentType && (
-          <PreviewToggle showPreview={showPreview} onToggle={togglePreview} />
-        )}
-        {/* Action buttons — visible on hover or on touch devices */}
-        <span className="opacity-0 group-hover:opacity-100 touch:opacity-100 transition-opacity">
-          <BlockActions block={block} />
-        </span>
       </div>
 
       {/* Block output */}
       {block.lines.length > 0 && (
-        showPreview && contentType ? (
+        effectiveShowPreview && contentType ? (
           <PreviewRenderer contentType={contentType} text={plainText} />
         ) : useVirtualization ? (
           <VirtualizedLines lines={block.lines} blockId={block.id} />

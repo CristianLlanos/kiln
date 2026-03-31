@@ -69,20 +69,25 @@ Kiln has two layers: a Rust backend (Tauri) that manages PTY sessions and parses
 
 ```
 1. User types "vim file.txt" → same flow as above through step 5
-2. Stream Parser detects ESC[?1049h (alt screen activation)
-3. Emits mode_switch event: { mode: 'interactive' }
-4. Frontend:
+2a. Alt screen path: Stream Parser detects ESC[?1049h / ?1047h / ?47h
+2b. Force-interactive path: execute_command checks first token against
+    config.shell.interactive_commands, sets force_interactive flag on
+    SessionSync. Parser picks up the flag before processing output.
+3. Parser enters interactive mode, starts buffering pty_stream data
+4. Emits mode_switch event: { mode: 'interactive' }
+5. Frontend:
    a. Hides block list and input
    b. Mounts fullscreen xterm.js instance
-   c. Connects xterm.js directly to PTY via streaming IPC
-5. All keyboard input goes through xterm.js → PTY (raw passthrough)
-6. User exits vim → program sends ESC[?1049l (alt screen deactivation)
-7. Stream Parser detects alt screen exit
-8. Emits mode_switch event: { mode: 'normal' }
-9. Frontend:
-   a. Unmounts xterm.js
-   b. Shows block list and input
-   c. Block for "vim file.txt" finalizes with exit code
+   c. Calls interactive_ready(session_id) → backend replays buffered data
+   d. Connects xterm.js directly to PTY via streaming IPC
+6. All keyboard input goes through xterm.js → PTY (raw passthrough)
+7. User exits vim → program sends ESC[?1049l / ?1047l / ?47l
+8. Stream Parser detects alt screen exit
+9. Emits mode_switch event: { mode: 'normal' }
+10. Frontend:
+    a. Unmounts xterm.js
+    b. Shows block list and input
+    c. Block for "vim file.txt" finalizes with exit code
 ```
 
 ### Stdin During Running Commands
@@ -133,6 +138,7 @@ Kiln has two layers: a Rust backend (Tauri) that manages PTY sessions and parses
 | `write_stdin` | `session_id, data` | — | Send raw input to PTY |
 | `resize_pty` | `session_id, cols, rows` | — | Resize PTY dimensions |
 | `get_config` | — | `Config` | Get current config |
+| `interactive_ready` | `session_id` | `base64 data` | Signal xterm.js is mounted, get buffered data |
 | `install_shell_integration` | `shell` | `Result` | Install shell hooks |
 
 ### Events (Rust → Frontend)
@@ -144,6 +150,7 @@ Kiln has two layers: a Rust backend (Tauri) that manages PTY sessions and parses
 | `block_complete` | `{ session_id, block_id, exit_code, duration }` | Command finished |
 | `mode_switch` | `{ session_id, mode: 'normal' | 'interactive' }` | Alt screen toggle |
 | `session_error` | `{ session_id, error }` | PTY crash or error |
+| `session_cwd` | `{ session_id, cwd }` | Working directory changed (OSC 7) |
 | `config_changed` | `{ config: Config }` | Config file changed |
 | `pty_stream` | `{ session_id, data: bytes }` | Raw PTY data (interactive mode only) |
 

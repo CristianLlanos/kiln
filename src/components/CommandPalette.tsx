@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useStore } from '../store'
-import { fuzzyMatch } from '../utils/fuzzyMatch'
+import { fuzzyScore } from '../utils/fuzzyMatch'
+import { isMac } from '../utils/session'
+import { toggleInteractiveMode } from '../utils/interactive'
 import type { KilnConfig } from '../store/types'
 
 interface PaletteAction {
@@ -12,9 +14,10 @@ interface PaletteAction {
   handler: () => void | Promise<void>
 }
 
+const MOD_KEY = isMac ? '⌘' : 'Ctrl+'
+
 function useActions(): PaletteAction[] {
-  const isMac = navigator.platform.includes('Mac')
-  const mod = isMac ? '⌘' : 'Ctrl+'
+  const mod = MOD_KEY
 
   return useMemo(() => {
     function action(
@@ -31,7 +34,7 @@ function useActions(): PaletteAction[] {
       // Session
       action('session:new', 'Session', 'New Session', () => {
         useStore.getState().createNewSession()
-      }, `${mod}⇧N`),
+      }, `${mod}T`),
 
       action('session:close', 'Session', 'Close Session', () => {
         const store = useStore.getState()
@@ -41,15 +44,8 @@ function useActions(): PaletteAction[] {
       }, `${mod}W`),
 
       action('session:rename', 'Session', 'Rename Session', () => {
-        // Prompt for new name
-        const store = useStore.getState()
-        if (!store.activeSessionId) return
-        const session = store.sessions[store.activeSessionId]
-        const newName = window.prompt('Rename session:', session?.name ?? '')
-        if (newName?.trim() && store.activeSessionId) {
-          store.renameSession(store.activeSessionId, newName.trim())
-        }
-      }),
+        useStore.getState().setTriggerRename(true)
+      }, 'F2'),
 
       action('session:switch', 'Session', 'Switch Session', () => {
         useStore.getState().setSwitcherOpen(true)
@@ -75,7 +71,13 @@ function useActions(): PaletteAction[] {
 
       action('view:clear', 'View', 'Clear Session Output', () => {
         useStore.getState().clearSessionOutput()
-      }),
+      }, 'Ctrl+L'),
+
+      // View
+      action('view:toggle-interactive', 'View', 'Toggle Interactive Mode', () => {
+        const sid = useStore.getState().activeSessionId
+        if (sid) toggleInteractiveMode(sid)
+      }, `${mod}I`),
 
       // Settings
       action('settings:open-config', 'Settings', 'Open Config File', () => {
@@ -99,7 +101,7 @@ function useActions(): PaletteAction[] {
         }
       }),
     ]
-  }, [isMac, mod])
+  }, [mod])
 }
 
 export function CommandPalette() {
@@ -118,10 +120,12 @@ export function CommandPalette() {
 
   const filteredActions = useMemo(() => {
     if (!filter.trim()) return actions
-    return actions.filter((a) => {
-      const searchable = `${a.category} ${a.name}`
-      return fuzzyMatch(searchable, filter.trim())
-    })
+    const query = filter.trim()
+    return actions
+      .map((a) => ({ action: a, score: fuzzyScore(`${a.category} ${a.name}`, query) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((x) => x.action)
   }, [actions, filter])
 
   // Reset selection when filter changes
@@ -157,12 +161,12 @@ export function CommandPalette() {
 
       case 'ArrowDown':
         e.preventDefault()
-        setSelectedIndex((i) => Math.min(i + 1, filteredActions.length - 1))
+        setSelectedIndex((i) => (i + 1) % filteredActions.length)
         break
 
       case 'ArrowUp':
         e.preventDefault()
-        setSelectedIndex((i) => Math.max(i - 1, 0))
+        setSelectedIndex((i) => (i - 1 + filteredActions.length) % filteredActions.length)
         break
 
       case 'Enter':
@@ -200,6 +204,9 @@ export function CommandPalette() {
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             placeholder="Type a command..."
             className="w-full bg-surface border border-border rounded px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary outline-none focus:border-accent font-mono"
           />

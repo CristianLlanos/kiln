@@ -369,12 +369,14 @@ Default config schema:
 [shell]
 program = "/bin/zsh"            # auto-detected from $SHELL
 args = []
+interactive_commands = ["vim", "nvim", "vi", "htop", "top", "claude", "ssh", "less", "man", "nano", "emacs"]
 
 [appearance]
 font_family = "JetBrains Mono"  # or path to custom font
 font_size = 14
 theme = "kiln-dark"
 collapse_threshold = 50         # lines before auto-collapse
+previews = true                 # rich previews for JSON, diff, CSV, etc.
 
 [scrollback]
 max_lines = 10000
@@ -424,6 +426,40 @@ check_on_launch = true    # set false to disable
 - [x] Modern text editing in input area (multi-line, syntax hints)
 - [x] Scrollback (configurable, default 10,000 lines)
 - [x] Copy enhancements — copy block output, copy as markdown, copy command only
+
+## Phase 2.5: UX Polish
+
+### Autocomplete
+- [x] File path autocomplete for bare names — always mix filesystem + history completions, not just path-prefixed tokens (`/`, `./`, `../`, `~/`)
+- [x] Tab/arrow key isolation — arrows own the completion list when visible; history navigation only when completions are dismissed
+- [x] Completion list stays open during debounce re-fetch while arrows are active
+
+### Input & Focus
+- [x] Global keyboard capture — typing anywhere focuses the input (unless overlay is open or in interactive mode)
+- [x] Cwd indicator above input — small muted line showing current working directory, always visible while typing
+- [x] Input resize handle — draggable grip at top of input area to expand beyond the 6-line auto-grow limit
+- [x] History position indicator — subtle "2 of 15" counter when navigating history with arrows
+
+### Previews
+- [x] Previews enabled by default — `showPreview` defaults to `true` when content type is detected
+- [x] Config opt-out — `appearance.previews = true` (default), set `false` to disable globally
+- [x] Size guard — skip preview detection when plain text exceeds 100KB to prevent parsing crashes
+
+### Bug Fixes
+- [x] Rename session — replace `window.prompt()` with inline rename UI (prompt doesn't work reliably in Tauri webview); trigger from command palette should focus the header rename field
+- [x] Clear session output bound to `Ctrl+L` — standard terminal keybinding, in addition to the command palette action
+- [x] Circular arrow navigation in command palette and session switcher — ArrowUp at top wraps to bottom, ArrowDown at bottom wraps to top
+
+### Interactive Mode Fixes
+- [x] Buffer and replay — backend buffers `pty_stream` data after `mode_switch` until frontend signals `interactive_ready`, then replays. Fixes vim/htop content delay on mount.
+- [x] Detect all alt screen variants — trigger interactive mode on `ESC[?1047h` and `ESC[?47h` in addition to `ESC[?1049h`
+- [x] Configurable force-interactive commands — `shell.interactive_commands` list of command prefixes that bypass alt screen detection and go straight to interactive mode
+- [x] Scan for all alt screen exit variants when leaving interactive mode
+
+### Visual Feedback
+- [x] Ctrl+C visual feedback — brief inline hint confirming SIGINT was sent
+- [x] Block timestamps — relative time ("2m ago") in block header, absolute time on hover
+- [x] Richer empty state — show cwd and shortcut hints (Cmd+E, Cmd+P) instead of just "Ready."
 
 ## Phase 3: Nice to Have
 

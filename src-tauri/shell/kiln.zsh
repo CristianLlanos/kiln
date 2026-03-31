@@ -56,7 +56,7 @@ __kiln_install() {
   # Add B marker to the prompt itself (between prompt text and user input)
   # This marks where the prompt ends and user typing begins.
   if [[ "$PROMPT" != *'133;B'* ]]; then
-    PROMPT="${PROMPT}%{\e]133;B\e\\%}"
+    PROMPT="${PROMPT}%{$(printf '\e]133;B\e\\')%}"
   fi
 
   # Register hooks

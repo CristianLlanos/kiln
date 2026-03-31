@@ -34,6 +34,11 @@ interface SessionErrorPayload {
   error: string
 }
 
+interface SessionCwdPayload {
+  session_id: string
+  cwd: string
+}
+
 export function useTauriEvents() {
   useEffect(() => {
     const unlisteners: Promise<() => void>[] = []
@@ -41,8 +46,9 @@ export function useTauriEvents() {
     unlisteners.push(
       listen<BlockStartPayload>('block_start', (event) => {
         const { session_id, block_id, cwd, timestamp } = event.payload
-        // Retrieve the pending command from the store
         const pending = useStore.getState().pendingCommands[session_id] || ''
+        // Skip blocks with no pending command (e.g., shell integration source on startup)
+        if (!pending) return
         useStore.getState().addBlock(session_id, {
           id: block_id,
           command: pending,
@@ -52,7 +58,6 @@ export function useTauriEvents() {
           segments: [],
           lines: [],
         })
-        // Clear pending command
         useStore.getState().setPendingCommand(session_id, '')
       })
     )
@@ -82,6 +87,13 @@ export function useTauriEvents() {
       listen<SessionErrorPayload>('session_error', (event) => {
         const { session_id, error } = event.payload
         useStore.getState().setSessionError(session_id, error)
+      })
+    )
+
+    unlisteners.push(
+      listen<SessionCwdPayload>('session_cwd', (event) => {
+        const { session_id, cwd } = event.payload
+        useStore.getState().setSessionCwd(session_id, cwd)
       })
     )
 

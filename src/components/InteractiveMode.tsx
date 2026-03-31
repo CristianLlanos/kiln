@@ -12,6 +12,7 @@ const KILN_THEME = {
   cursor: '#7F52FF',
   cursorAccent: '#0F0F14',
   selectionBackground: '#7F52FF40',
+  selectionForeground: '#FFFFFF',
   black: '#16161E',
   red: '#E24462',
   green: '#4ADE80',
@@ -19,7 +20,7 @@ const KILN_THEME = {
   blue: '#7F52FF',
   magenta: '#B125EA',
   cyan: '#56B6C2',
-  white: '#E8E8F0',
+  white: '#A0A0B8',
   brightBlack: '#2A2A3A',
   brightRed: '#FF6B81',
   brightGreen: '#69FF94',
@@ -27,7 +28,7 @@ const KILN_THEME = {
   brightBlue: '#A78BFA',
   brightMagenta: '#D946EF',
   brightCyan: '#7EDCE2',
-  brightWhite: '#FFFFFF',
+  brightWhite: '#E8E8F0',
 }
 
 interface PtyStreamPayload {
@@ -114,6 +115,27 @@ export function InteractiveMode({ sessionId }: InteractiveModeProps) {
 
     // Focus the terminal
     terminal.focus()
+
+    // Signal the backend that xterm.js is ready, and replay any buffered data
+    invoke<string>('interactive_ready', { sessionId }).then((bufferedBase64) => {
+      if (bufferedBase64) {
+        const bytes = Uint8Array.from(atob(bufferedBase64), c => c.charCodeAt(0))
+        if (bytes.length > 0) {
+          terminal.write(bytes)
+        }
+      }
+      // Force TUI programs to redraw by triggering SIGWINCH via a size change.
+      // Briefly resize to cols-1, then back to actual size — guarantees the
+      // PTY sees a change even if dimensions already match.
+      if (fitAddonRef.current && terminalRef.current) {
+        fitAddonRef.current.fit()
+        const { cols, rows } = terminalRef.current
+        sendResize(Math.max(1, cols - 1), rows)
+        requestAnimationFrame(() => {
+          sendResize(cols, rows)
+        })
+      }
+    }).catch(console.error)
 
     return () => {
       onDataDisposable.dispose()

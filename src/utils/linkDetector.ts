@@ -12,9 +12,10 @@ const URL_RE =
 // File path pattern:
 //   absolute: /foo/bar, ~/foo/bar
 //   relative: ./foo, ../foo
+// Must be preceded by whitespace or start of string (avoids matching paths inside words/URLs)
 // Optionally followed by :line or :line:col
 const PATH_RE =
-  /(?:~\/|\.\.?\/|\/(?=[a-zA-Z0-9_.\-]))[\w.\-/]+(?::[\d]+(?::[\d]+)?)?/g
+  /(?<=^|[\s"'([\]{,;:=])(?:~\/|\.\.?\/|\/(?=[a-zA-Z0-9_]))[\w.\-/]+(?::[\d]+(?::[\d]+)?)?/g
 
 /**
  * Detect URLs and file paths within a plain text string.

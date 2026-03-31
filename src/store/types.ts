@@ -34,6 +34,8 @@ export interface Session {
   name: string
   blocks: Block[]
   mode: SessionMode
+  /** Current working directory (updated via OSC 7) */
+  cwd: string
   /** Set when the PTY crashes or shell process exits unexpectedly */
   sessionError?: string
   /** Per-session command history (newest at end) */
@@ -58,6 +60,7 @@ export type ShellIntegrationState = 'checking' | 'pending' | 'installed' | 'skip
 export interface ShellConfig {
   program: string
   args: string[]
+  interactive_commands: string[]
 }
 
 export interface AppearanceConfig {
@@ -65,6 +68,7 @@ export interface AppearanceConfig {
   font_size: number
   theme: string
   collapse_threshold: number
+  previews: boolean
 }
 
 export interface ScrollbackConfig {
@@ -105,7 +109,7 @@ export interface SearchMatch {
 
 // ── Content detection types ────────────────────────────────────────────────
 
-export type ContentType = 'json' | 'diff' | 'csv' | 'tsv' | 'markdown' | 'table' | null
+export type ContentType = 'json' | 'diff' | 'csv' | 'tsv' | 'markdown' | 'table' | 'sql' | 'yaml' | null
 
 // ── Autocomplete types ────────────────────────────────────────────────────
 

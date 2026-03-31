@@ -19,6 +19,12 @@ export function useActiveSessionName(): string {
   )
 }
 
+export function useActiveSessionCwd(): string {
+  return useStore((s) =>
+    s.activeSessionId ? (s.sessions[s.activeSessionId]?.cwd ?? '~') : '~'
+  )
+}
+
 export function useActiveSessionError(): string | undefined {
   return useStore((s) =>
     s.activeSessionId ? s.sessions[s.activeSessionId]?.sessionError : undefined

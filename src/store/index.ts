@@ -27,6 +27,8 @@ interface AppState {
   completions: CompletionItem[]
   completionIndex: number
   completionsVisible: boolean
+  /** True when user is actively navigating completions with arrow keys */
+  completionsArrowActive: boolean
 
   // Search state
   searchOpen: boolean
@@ -42,6 +44,7 @@ interface AppState {
   setCompletions: (items: CompletionItem[]) => void
   setCompletionIndex: (index: number) => void
   setCompletionsVisible: (visible: boolean) => void
+  setCompletionsArrowActive: (active: boolean) => void
   dismissCompletions: () => void
 
   // Search actions
@@ -60,6 +63,7 @@ interface AppState {
   initSession: (id: string) => void
   setActiveSession: (id: string) => void
   setPendingCommand: (sessionId: string, command: string) => void
+  setSessionCwd: (sessionId: string, cwd: string) => void
   setSessionMode: (sessionId: string, mode: SessionMode) => void
 
   addBlock: (sessionId: string, block: Block) => void
@@ -81,6 +85,11 @@ interface AppState {
   // Command palette
   setPaletteOpen: (open: boolean) => void
   clearSessionOutput: () => void
+
+  // Header rename trigger
+  /** When true, the header rename input should activate */
+  triggerRename: boolean
+  setTriggerRename: (trigger: boolean) => void
 }
 
 /** Update a session by id, returning unchanged state if session not found. */
@@ -158,11 +167,13 @@ export const useStore = create<AppState>((set, get) => ({
   shellState: 'checking' as ShellIntegrationState,
   config: null,
   paletteOpen: false,
+  triggerRename: false,
 
   // Autocomplete defaults
   completions: [],
   completionIndex: 0,
   completionsVisible: false,
+  completionsArrowActive: false,
 
   // Search defaults
   searchOpen: false,
@@ -175,10 +186,16 @@ export const useStore = create<AppState>((set, get) => ({
   setConfig: (config) => set({ config }),
 
   // Autocomplete actions
-  setCompletions: (items) => set({ completions: items, completionIndex: 0, completionsVisible: items.length > 0 }),
+  setCompletions: (items) => set((state) => ({
+    completions: items,
+    completionIndex: items.length > 0 ? Math.min(state.completionIndex, items.length - 1) : 0,
+    // Keep visible during debounce re-fetch if arrows are active
+    completionsVisible: items.length > 0 || state.completionsArrowActive,
+  })),
   setCompletionIndex: (index) => set({ completionIndex: index }),
   setCompletionsVisible: (visible) => set({ completionsVisible: visible }),
-  dismissCompletions: () => set({ completions: [], completionIndex: 0, completionsVisible: false }),
+  setCompletionsArrowActive: (active) => set({ completionsArrowActive: active }),
+  dismissCompletions: () => set({ completions: [], completionIndex: 0, completionsVisible: false, completionsArrowActive: false }),
 
   // Search actions
   setSearchOpen: (open) => {
@@ -318,7 +335,7 @@ export const useStore = create<AppState>((set, get) => ({
       return {
         sessions: {
           ...state.sessions,
-          [id]: { id, name: `Session ${nextCounter}`, blocks: [], mode: 'normal', commandHistory: [], historyIndex: -1, historyDraft: '' },
+          [id]: { id, name: `Session ${nextCounter}`, blocks: [], mode: 'normal', cwd: '~', commandHistory: [], historyIndex: -1, historyDraft: '' },
         },
         activeSessionId: id,
         sessionOrder: bumpMRU(state.sessionOrder, id),
@@ -339,6 +356,9 @@ export const useStore = create<AppState>((set, get) => ({
         [sessionId]: command,
       },
     })),
+
+  setSessionCwd: (sessionId, cwd) =>
+    set((state) => updateSession(state, sessionId, () => ({ cwd }))),
 
   setSessionMode: (sessionId, mode) =>
     set((state) => updateSession(state, sessionId, () => ({ mode }))),
@@ -442,12 +462,13 @@ export const useStore = create<AppState>((set, get) => ({
 
   // Command palette
   setPaletteOpen: (open) => set({ paletteOpen: open }),
+  setTriggerRename: (trigger) => set({ triggerRename: trigger }),
 
   clearSessionOutput: () =>
     set((state) => {
       const { activeSessionId } = state
       if (!activeSessionId) return state
-      return updateSession(state, activeSessionId, () => ({ blocks: [] }))
+      return updateSession(state, activeSessionId, () => ({ blocks: [], historyIndex: -1, historyDraft: '' }))
     }),
 
   // Command history

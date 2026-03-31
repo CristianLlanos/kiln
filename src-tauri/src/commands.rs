@@ -1,7 +1,8 @@
+use base64::Engine;
 use crate::config;
 use crate::session::SessionManager;
 use crate::shell_integration;
-use tauri::{State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, State, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
 
 #[tauri::command]
@@ -28,6 +29,13 @@ pub fn execute_command(
     command: String,
     session_mgr: State<'_, SessionManager>,
 ) -> Result<(), String> {
+    // Check if the command's first token matches interactive_commands
+    let cfg = crate::config::current();
+    let first_token = command.split_whitespace().next().unwrap_or("");
+    if cfg.shell.interactive_commands.iter().any(|ic| ic == first_token) {
+        session_mgr.set_force_interactive(&session_id)?;
+    }
+
     session_mgr.write_to_session(&session_id, &format!("{}\n", command))
 }
 
@@ -87,31 +95,82 @@ pub fn get_config() -> config::KilnConfig {
     config::current()
 }
 
-#[tauri::command]
-pub fn open_config() -> Result<(), String> {
-    let path = config::config_path();
+/// Open a path or URL with the system's default handler.
+fn open_with_system(arg: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(&path)
+            .arg(arg)
             .spawn()
-            .map_err(|e| format!("Failed to open config file: {}", e))?;
+            .map_err(|e| format!("Failed to open: {}", e))?;
     }
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
-            .args(["/C", "start", "", &path.to_string_lossy()])
+            .args(["/C", "start", "", arg])
             .spawn()
-            .map_err(|e| format!("Failed to open config file: {}", e))?;
+            .map_err(|e| format!("Failed to open: {}", e))?;
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
-            .arg(&path)
+            .arg(arg)
             .spawn()
-            .map_err(|e| format!("Failed to open config file: {}", e))?;
+            .map_err(|e| format!("Failed to open: {}", e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_config() -> Result<(), String> {
+    let path = config::config_path();
+    open_with_system(&path.to_string_lossy())
+}
+
+#[tauri::command]
+pub fn force_interactive(
+    session_id: String,
+    app_handle: tauri::AppHandle,
+    session_mgr: State<'_, SessionManager>,
+) -> Result<(), String> {
+    session_mgr.force_interactive_with_wake(&session_id)?;
+    // Emit mode_switch immediately so the frontend switches without waiting
+    // for the parser to wake up (it may be blocked on read())
+    let _ = app_handle.emit(
+        "mode_switch",
+        crate::parser::ModeSwitchEvent {
+            session_id,
+            mode: "interactive".to_string(),
+        },
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn exit_interactive(
+    session_id: String,
+    session_mgr: State<'_, SessionManager>,
+) -> Result<(), String> {
+    session_mgr.exit_interactive(&session_id)
+}
+
+#[tauri::command]
+pub fn interactive_ready(
+    session_id: String,
+    session_mgr: State<'_, SessionManager>,
+) -> Result<String, String> {
+    let buffered = session_mgr.interactive_ready(&session_id)?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&buffered);
+    Ok(encoded)
+}
+
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    // Only allow http/https URLs to prevent arbitrary file/app execution
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err(format!("Refused to open non-HTTP URL: {}", url));
+    }
+    open_with_system(&url)
 }
 
 #[tauri::command]

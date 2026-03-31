@@ -99,11 +99,11 @@ fn filesystem_completions(partial: &str, cwd: &str) -> Vec<CompletionItem> {
         }
     }
 
-    // Sort: directories first, then alphabetical
+    // Sort: files first, then directories, both alphabetical by name
     results.sort_by(|a, b| {
         let a_dir = a.kind == "directory";
         let b_dir = b.kind == "directory";
-        b_dir.cmp(&a_dir).then_with(|| a.text.cmp(&b.text))
+        a_dir.cmp(&b_dir).then_with(|| a.text.to_lowercase().cmp(&b.text.to_lowercase()))
     });
 
     results.truncate(20);

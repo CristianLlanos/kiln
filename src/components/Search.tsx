@@ -64,6 +64,9 @@ export function Search() {
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         onKeyDown={handleKeyDown}
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
         placeholder="Search..."
         className="flex-1 bg-surface-raised border border-border rounded px-2 py-1 text-sm text-text-primary placeholder:text-text-secondary outline-none focus:border-accent font-mono min-w-0"
       />

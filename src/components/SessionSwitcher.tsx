@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useStore } from '../store'
 import type { Session } from '../store/types'
-import { hasRunningCommand, getLastBlock, formatTimeAgo } from '../utils/session'
-import { fuzzyMatch } from '../utils/fuzzyMatch'
+import { hasRunningCommand, getLastBlock, formatTimeAgo, shortenHomePath, isMac } from '../utils/session'
+import { fuzzyScore } from '../utils/fuzzyMatch'
 
 export function SessionSwitcher() {
   const [filter, setFilter] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const renameRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   const sessions = useStore((s) => s.sessions)
@@ -16,6 +19,7 @@ export function SessionSwitcher() {
   const switchSession = useStore((s) => s.switchSession)
   const closeSession = useStore((s) => s.closeSession)
   const createNewSession = useStore((s) => s.createNewSession)
+  const renameSession = useStore((s) => s.renameSession)
   const setSwitcherOpen = useStore((s) => s.setSwitcherOpen)
   const runningOnly = useStore((s) => s.switcherRunningOnly)
 
@@ -35,15 +39,16 @@ export function SessionSwitcher() {
     }
 
     if (filter.trim()) {
-      ordered = ordered.filter((s) => {
-        const lastBlock = getLastBlock(s)
-        const searchable = [
-          s.name,
-          lastBlock?.cwd ?? '',
-          lastBlock?.command ?? '',
-        ].join(' ')
-        return fuzzyMatch(searchable, filter.trim())
-      })
+      const query = filter.trim()
+      ordered = ordered
+        .map((s) => {
+          const lastBlock = getLastBlock(s)
+          const searchable = [s.name, lastBlock?.cwd ?? '', lastBlock?.command ?? ''].join(' ')
+          return { session: s, score: fuzzyScore(searchable, query) }
+        })
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((x) => x.session)
     }
 
     return ordered
@@ -81,6 +86,33 @@ export function SessionSwitcher() {
     resetAndClose()
   }, [createNewSession, resetAndClose])
 
+  const startRename = useCallback((session: Session) => {
+    setRenamingId(session.id)
+    setRenameValue(session.name)
+  }, [])
+
+  const commitRename = useCallback(() => {
+    if (renamingId && renameValue.trim()) {
+      renameSession(renamingId, renameValue.trim())
+    }
+    setRenamingId(null)
+    // Refocus the filter input
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }, [renamingId, renameValue, renameSession])
+
+  const cancelRename = useCallback(() => {
+    setRenamingId(null)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }, [])
+
+  // Focus rename input when it appears
+  useEffect(() => {
+    if (renamingId) {
+      renameRef.current?.focus()
+      renameRef.current?.select()
+    }
+  }, [renamingId])
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     const totalItems = filteredSessions.length + 1 // +1 for "New Session"
 
@@ -92,12 +124,12 @@ export function SessionSwitcher() {
 
       case 'ArrowDown':
         e.preventDefault()
-        setSelectedIndex((i) => Math.min(i + 1, totalItems - 1))
+        setSelectedIndex((i) => (i + 1) % totalItems)
         break
 
       case 'ArrowUp':
         e.preventDefault()
-        setSelectedIndex((i) => Math.max(i - 1, 0))
+        setSelectedIndex((i) => (i - 1 + totalItems) % totalItems)
         break
 
       case 'Enter':
@@ -127,6 +159,14 @@ export function SessionSwitcher() {
         }
         break
 
+      case 'F2':
+        // Rename selected session
+        e.preventDefault()
+        if (selectedIndex < filteredSessions.length) {
+          startRename(filteredSessions[selectedIndex])
+        }
+        break
+
       case 'n':
       case 'N':
         // Cmd+N within the popup creates a new session
@@ -136,7 +176,7 @@ export function SessionSwitcher() {
         }
         break
     }
-  }, [filteredSessions, selectedIndex, filter, handleClose, handleSelect, handleNewSession, closeSession])
+  }, [filteredSessions, selectedIndex, filter, handleClose, handleSelect, handleNewSession, closeSession, startRename])
 
   return (
     <div
@@ -167,6 +207,16 @@ export function SessionSwitcher() {
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'F2' && selectedIndex < filteredSessions.length) {
+                e.preventDefault()
+                e.stopPropagation()
+                startRename(filteredSessions[selectedIndex])
+              }
+            }}
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             placeholder="Filter sessions..."
             className="w-full bg-surface border border-border rounded px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary outline-none focus:border-accent font-mono"
           />
@@ -198,18 +248,38 @@ export function SessionSwitcher() {
                       }`}
                     />
                     {/* Session name */}
-                    <span
-                      className={`text-sm font-medium truncate ${
-                        isActive ? 'text-accent' : 'text-text-primary'
-                      }`}
-                    >
-                      {session.name}
-                    </span>
+                    {renamingId === session.id ? (
+                      <input
+                        ref={renameRef}
+                        type="text"
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onBlur={commitRename}
+                        onKeyDown={(e) => {
+                          e.stopPropagation()
+                          if (e.key === 'Enter') commitRename()
+                          if (e.key === 'Escape') cancelRename()
+                        }}
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        className="text-sm font-medium bg-surface border border-accent rounded px-1.5 py-0.5 text-text-primary outline-none font-mono w-40"
+                      />
+                    ) : (
+                      <span
+                        className={`text-sm font-medium truncate ${
+                          isActive ? 'text-accent' : 'text-text-primary'
+                        }`}
+                        onDoubleClick={() => startRename(session)}
+                      >
+                        {session.name}
+                      </span>
+                    )}
                   </div>
                   {/* CWD */}
                   {lastBlock?.cwd && (
                     <span className="text-xs text-text-secondary truncate ml-3 shrink-0 max-w-[45%] text-right">
-                      {lastBlock.cwd.replace(/^\/Users\/[^/]+/, '~')}
+                      {shortenHomePath(lastBlock.cwd)}
                     </span>
                   )}
                 </div>
@@ -239,7 +309,7 @@ export function SessionSwitcher() {
             <span className="text-accent text-sm font-medium">+</span>
             <span className="text-sm text-text-secondary">New Session</span>
             <span className="ml-auto text-xs text-text-secondary/60">
-              {navigator.platform.includes('Mac') ? '⌘⇧N' : 'Ctrl+Shift+N'}
+              {isMac ? '⌘T' : 'Ctrl+T'}
             </span>
           </div>
         </div>
@@ -249,6 +319,7 @@ export function SessionSwitcher() {
           <span>↑↓ navigate</span>
           <span>↵ switch</span>
           <span>esc close</span>
+          <span>F2 rename</span>
           <span>del close session</span>
         </div>
       </div>

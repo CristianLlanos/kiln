@@ -1,7 +1,10 @@
+use crate::session::SessionSync;
 use base64::Engine;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::io::Read;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -47,6 +50,12 @@ pub struct PtyStreamEvent {
 pub struct SessionErrorEvent {
     pub session_id: String,
     pub error: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct SessionCwdEvent {
+    pub session_id: String,
+    pub cwd: String,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -237,6 +246,7 @@ impl SessionMode {
 pub struct StreamParser {
     session_id: String,
     app_handle: AppHandle,
+    sync: Arc<SessionSync>,
 
     // Parser state
     region: Region,
@@ -275,11 +285,12 @@ pub struct StreamParser {
 }
 
 impl StreamParser {
-    fn new(session_id: String, app_handle: AppHandle) -> Self {
+    fn new(session_id: String, app_handle: AppHandle, sync: Arc<SessionSync>) -> Self {
         let tail_capacity_lines = MAX_LINES_PER_BLOCK.saturating_sub(HEAD_LINES_TO_KEEP);
         Self {
             session_id,
             app_handle,
+            sync,
             region: Region::Init,
             style: AnsiStyle::default(),
             current_block_id: None,
@@ -384,11 +395,22 @@ impl StreamParser {
     }
 
     /// Main entry point — run the parser loop reading from the PTY.
-    pub fn start(session_id: String, app_handle: AppHandle, mut reader: Box<dyn Read + Send>) {
-        let mut parser = Self::new(session_id, app_handle);
+    pub fn start(session_id: String, app_handle: AppHandle, mut reader: Box<dyn Read + Send>, sync: Arc<SessionSync>) {
+        let mut parser = Self::new(session_id, app_handle, sync);
         let mut buf = [0u8; 4096];
 
         loop {
+            // Check force-interactive flag (set by execute_command for commands in interactive_commands list)
+            if parser.sync.force_interactive.swap(false, Ordering::SeqCst) {
+                if parser.session_mode == SessionMode::Normal {
+                    parser.flush_text_segment();
+                    parser.flush_pending();
+                    parser.session_mode = SessionMode::Interactive;
+                    parser.sync.start_buffering();
+                    parser.emit_mode_switch(&SessionMode::Interactive);
+                }
+            }
+
             match reader.read(&mut buf) {
                 Ok(0) => {
                     // PTY closed — shell process exited
@@ -399,6 +421,18 @@ impl StreamParser {
                 Ok(n) => {
                     let chunk = &buf[..n];
 
+                    // Re-check force-interactive flag after read returns —
+                    // the flag may have been set while we were blocked on read()
+                    if parser.sync.force_interactive.swap(false, Ordering::SeqCst) {
+                        if parser.session_mode == SessionMode::Normal {
+                            parser.flush_text_segment();
+                            parser.flush_pending();
+                            parser.session_mode = SessionMode::Interactive;
+                            parser.sync.start_buffering();
+                            parser.emit_mode_switch(&SessionMode::Interactive);
+                        }
+                    }
+
                     // Check fallback timeout before processing
                     parser.check_fallback_timeout();
 
@@ -406,8 +440,14 @@ impl StreamParser {
                         SessionMode::Interactive | SessionMode::Fallback => {
                             // In interactive/fallback mode, forward raw bytes
                             // but still scan for alt screen exit sequence
-                            parser.scan_for_alt_screen_exit(chunk);
-                            parser.emit_pty_stream(chunk);
+                            parser.scan_for_interactive_exit(chunk);
+
+                            // Buffer or emit depending on frontend readiness
+                            if parser.sync.buffering.load(Ordering::SeqCst) {
+                                parser.sync.buffer_data(chunk);
+                            } else {
+                                parser.emit_pty_stream(chunk);
+                            }
                         }
                         SessionMode::Normal => {
                             parser.feed(chunk);
@@ -534,7 +574,17 @@ impl StreamParser {
             // CWD reporting: file://hostname/path
             if let Some(path_start) = url.find("//") {
                 if let Some(slash) = url[path_start + 2..].find('/') {
-                    self.current_cwd = url[path_start + 2 + slash..].to_string();
+                    let new_cwd = url[path_start + 2 + slash..].to_string();
+                    if new_cwd != self.current_cwd {
+                        self.current_cwd = new_cwd.clone();
+                        let _ = self.app_handle.emit(
+                            "session_cwd",
+                            SessionCwdEvent {
+                                session_id: self.session_id.clone(),
+                                cwd: new_cwd,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -633,16 +683,19 @@ impl StreamParser {
 
     fn handle_csi(&mut self, seq: &[u8]) {
         // Check for alt screen activation/deactivation using byte comparison
-        if seq.len() >= 8 {
-            if seq[2..] == *b"?1049h" {
-                // Alt screen activation — switch to interactive mode
+        if seq.len() >= 5 {
+            let params = &seq[2..];
+            // Alt screen activation variants
+            if params == b"?1049h" || params == b"?1047h" || params == b"?47h" {
                 self.flush_text_segment();
                 self.flush_pending();
                 self.session_mode = SessionMode::Interactive;
+                self.sync.start_buffering();
                 self.emit_mode_switch(&SessionMode::Interactive);
                 return;
-            } else if seq[2..] == *b"?1049l" {
-                // Alt screen deactivation — return to normal mode
+            }
+            // Alt screen deactivation variants
+            if params == b"?1049l" || params == b"?1047l" || params == b"?47l" {
                 self.session_mode = SessionMode::Normal;
                 self.emit_mode_switch(&SessionMode::Normal);
                 return;
@@ -870,22 +923,24 @@ impl StreamParser {
             .total_lines_seen
             .saturating_sub(HEAD_LINES_TO_KEEP + self.tail_line_count);
 
-        // Emit truncation marker with dim styling
-        let marker_text = format!("\n[... {} lines truncated ...]\n", truncated_count);
-        let _ = self.app_handle.emit(
-            "block_output",
-            BlockOutputEvent {
-                session_id: self.session_id.clone(),
-                block_id: block_id.clone(),
-                segments: vec![StyledSegment {
-                    text: marker_text,
-                    style: SegmentStyle {
-                        dim: Some(true),
-                        ..SegmentStyle::default()
-                    },
-                }],
-            },
-        );
+        // Only emit the marker if lines were actually dropped
+        if truncated_count > 0 {
+            let marker_text = format!("\n[... {} lines truncated ...]\n", truncated_count);
+            let _ = self.app_handle.emit(
+                "block_output",
+                BlockOutputEvent {
+                    session_id: self.session_id.clone(),
+                    block_id: block_id.clone(),
+                    segments: vec![StyledSegment {
+                        text: marker_text,
+                        style: SegmentStyle {
+                            dim: Some(true),
+                            ..SegmentStyle::default()
+                        },
+                    }],
+                },
+            );
+        }
 
         // Emit tail segments
         let tail: Vec<StyledSegment> = self.tail_ring.drain(..).collect();
@@ -903,24 +958,52 @@ impl StreamParser {
 
     // ── Alt screen scanning (interactive mode) ─────────────────────────────
 
-    /// Scan raw bytes for alt screen exit sequence ESC[?1049l while in
-    /// interactive or fallback mode. This is a simple byte-level scan
-    /// (no full parse) since we're forwarding raw data.
-    fn scan_for_alt_screen_exit(&mut self, data: &[u8]) {
-        // Look for the byte pattern: 0x1b [ ? 1 0 4 9 l
-        const EXIT_SEQ: &[u8] = b"\x1b[?1049l";
-        if data.len() < EXIT_SEQ.len() {
+    /// Scan raw bytes for interactive mode exit signals:
+    /// - Alt screen exit sequences (ESC[?1049l, ESC[?1047l, ESC[?47l)
+    /// - OSC 133 shell prompt markers (D; or A) — indicates the shell is back
+    ///   after a force-interactive command that doesn't use alt screen
+    fn scan_for_interactive_exit(&mut self, data: &[u8]) {
+        if self.session_mode != SessionMode::Interactive {
             return;
         }
-        for window in data.windows(EXIT_SEQ.len()) {
-            if window == EXIT_SEQ {
-                // Only switch back to normal if we were in interactive mode
-                // (not fallback — fallback stays until session restart)
-                if self.session_mode == SessionMode::Interactive {
-                    self.session_mode = SessionMode::Normal;
-                    self.emit_mode_switch(&SessionMode::Normal);
+
+        // Alt screen exit sequences
+        const ALT_EXIT_SEQS: &[&[u8]] = &[
+            b"\x1b[?1049l",
+            b"\x1b[?1047l",
+            b"\x1b[?47l",
+        ];
+
+        for exit_seq in ALT_EXIT_SEQS {
+            if data.len() >= exit_seq.len() {
+                for window in data.windows(exit_seq.len()) {
+                    if window == *exit_seq {
+                        self.session_mode = SessionMode::Normal;
+                        self.emit_mode_switch(&SessionMode::Normal);
+                        return;
+                    }
                 }
-                return;
+            }
+        }
+
+        // OSC 133 prompt markers — shell is back after a force-interactive command exits.
+        // Skip this check for manual toggle (Cmd+I) — user controls when to exit.
+        if !self.sync.manual_interactive.load(Ordering::SeqCst) {
+            const OSC_MARKERS: &[&[u8]] = &[
+                b"\x1b]133;D",
+                b"\x1b]133;A",
+            ];
+
+            for marker in OSC_MARKERS {
+                if data.len() >= marker.len() {
+                    for window in data.windows(marker.len()) {
+                        if window == *marker {
+                            self.session_mode = SessionMode::Normal;
+                            self.emit_mode_switch(&SessionMode::Normal);
+                            return;
+                        }
+                    }
+                }
             }
         }
     }

@@ -35,6 +35,8 @@ pub struct ShellConfig {
     pub program: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default = "default_interactive_commands")]
+    pub interactive_commands: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,6 +49,8 @@ pub struct AppearanceConfig {
     pub theme: String,
     #[serde(default = "default_collapse_threshold")]
     pub collapse_threshold: u32,
+    #[serde(default = "default_previews")]
+    pub previews: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +89,24 @@ fn default_shell() -> ShellConfig {
     ShellConfig {
         program: default_shell_program(),
         args: vec![],
+        interactive_commands: default_interactive_commands(),
     }
+}
+
+fn default_interactive_commands() -> Vec<String> {
+    vec![
+        "vim".to_string(),
+        "nvim".to_string(),
+        "vi".to_string(),
+        "htop".to_string(),
+        "top".to_string(),
+        "claude".to_string(),
+        "ssh".to_string(),
+        "less".to_string(),
+        "man".to_string(),
+        "nano".to_string(),
+        "emacs".to_string(),
+    ]
 }
 
 fn default_shell_program() -> String {
@@ -103,6 +124,9 @@ fn default_theme() -> String {
 }
 fn default_collapse_threshold() -> u32 {
     50
+}
+fn default_previews() -> bool {
+    true
 }
 fn default_max_lines() -> u32 {
     10000
@@ -154,6 +178,7 @@ impl Default for AppearanceConfig {
             font_size: default_font_size(),
             theme: default_theme(),
             collapse_threshold: default_collapse_threshold(),
+            previews: default_previews(),
         }
     }
 }
@@ -202,16 +227,23 @@ pub fn config_path() -> PathBuf {
 /// The default config file content, as a TOML string.
 fn default_config_toml() -> String {
     let shell_program = default_shell_program();
+    let interactive_cmds = default_interactive_commands()
+        .iter()
+        .map(|s| format!("\"{}\"", s))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         r#"[shell]
 program = "{shell_program}"
 args = []
+interactive_commands = [{interactive_cmds}]
 
 [appearance]
 font_family = "JetBrains Mono"
 font_size = 14
 theme = "kiln-dark"
 collapse_threshold = 50
+previews = true
 
 [scrollback]
 max_lines = 10000

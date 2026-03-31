@@ -20,12 +20,16 @@ From the command palette (`Cmd+P`), select **Open Config File**. This opens the 
 |-----------|------------|----------------|-------------------------------------------|
 | `program` | `string`   | `$SHELL` or `"/bin/zsh"` | Path to the shell binary         |
 | `args`    | `string[]` | `[]`           | Arguments passed to the shell on startup  |
+| `interactive_commands` | `string[]` | `["vim", "nvim", "vi", "htop", "top", "claude", "ssh", "less", "man", "nano", "emacs"]` | Commands that bypass alt screen detection and go straight to fullscreen terminal mode |
 
 ```toml
 [shell]
 program = "/bin/zsh"
 args = []
+interactive_commands = ["vim", "nvim", "vi", "htop", "top", "claude", "ssh", "less", "man", "nano", "emacs"]
 ```
+
+Most TUI programs (vim, htop) are detected automatically via alt screen escape sequences (`ESC[?1049h`, `ESC[?1047h`, `ESC[?47h`). The `interactive_commands` list is for programs that don't use alt screen — they go straight to fullscreen terminal mode before any output arrives. Match is on the first token of the command (e.g., `"claude"` matches `claude chat` and `claude code`).
 
 ### `[appearance]`
 
@@ -35,6 +39,7 @@ args = []
 | `font_size`          | `int`    | `14`               | Font size in pixels                                |
 | `theme`              | `string` | `"kiln-dark"`      | Color theme name                                   |
 | `collapse_threshold` | `int`    | `50`               | Lines of output before a block auto-collapses      |
+| `previews`           | `bool`   | `true`             | Enable rich previews for JSON, diff, CSV, markdown, and tables |
 
 ```toml
 [appearance]
@@ -42,7 +47,12 @@ font_family = "JetBrains Mono"
 font_size = 14
 theme = "kiln-dark"
 collapse_threshold = 50
+previews = true
 ```
+
+When `previews` is enabled (default), blocks with recognized content types are shown as rich previews automatically. Supported types: JSON (collapsible tree), diff (syntax-highlighted), CSV/TSV (table), YAML (syntax-highlighted), SQL (syntax-highlighted), Markdown (rendered), and column-aligned tables. Each block has a "Raw" toggle to switch to plain output. Set `previews = false` to disable rich previews globally. Previews are automatically skipped for outputs larger than 100KB to prevent performance issues.
+
+Content type is detected first by file extension in the command (e.g., `cat data.json`, `cat config.yml`, `cat query.sql`), then by content heuristics as a fallback.
 
 The `font_family` value is used as the primary font in a system monospace font stack. If the specified font is not installed, the system falls back to the next available monospace font.
 
