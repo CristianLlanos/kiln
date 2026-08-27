@@ -89,12 +89,28 @@ export interface KeybindingsConfig {
   close_session: string
 }
 
+export interface PersistenceConfig {
+  max_blocks_per_session: number
+}
+
+export interface NotificationsConfig {
+  enabled: boolean
+  threshold_seconds: number
+}
+
+export interface UpdatesConfig {
+  check_on_launch: boolean
+}
+
 export interface KilnConfig {
   shell: ShellConfig
   appearance: AppearanceConfig
   scrollback: ScrollbackConfig
   performance: PerformanceConfig
   keybindings: KeybindingsConfig
+  persistence: PersistenceConfig
+  notifications: NotificationsConfig
+  updates: UpdatesConfig
 }
 
 // ── Search types ────────────────────────────────────────────────────────────
@@ -105,6 +121,48 @@ export interface SearchMatch {
   segmentIndex: number
   startOffset: number
   length: number
+}
+
+// ── Theme types ────────────────────────────────────────────────────────────
+
+export interface ThemeColors {
+  background: string
+  surface: string
+  surface_raised: string
+  border: string
+  text_primary: string
+  text_secondary: string
+  accent_primary: string
+  accent_secondary: string
+  error: string
+  success: string
+  warning: string
+}
+
+export interface TerminalColors {
+  black: string
+  red: string
+  green: string
+  yellow: string
+  blue: string
+  magenta: string
+  cyan: string
+  white: string
+  bright_black: string
+  bright_red: string
+  bright_green: string
+  bright_yellow: string
+  bright_blue: string
+  bright_magenta: string
+  bright_cyan: string
+  bright_white: string
+}
+
+export interface KilnTheme {
+  name: string
+  author: string
+  colors: ThemeColors
+  terminal: TerminalColors
 }
 
 // ── Content detection types ────────────────────────────────────────────────

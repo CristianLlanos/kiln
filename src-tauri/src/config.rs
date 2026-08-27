@@ -27,6 +27,12 @@ pub struct KilnConfig {
     pub performance: PerformanceConfig,
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
+    #[serde(default)]
+    pub persistence: PersistenceConfig,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
+    #[serde(default)]
+    pub updates: UpdatesConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +87,26 @@ pub struct KeybindingsConfig {
     pub new_session: String,
     #[serde(default = "default_kb_close_session")]
     pub close_session: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistenceConfig {
+    #[serde(default = "default_max_blocks_per_session")]
+    pub max_blocks_per_session: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationsConfig {
+    #[serde(default = "default_notifications_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_threshold_seconds")]
+    pub threshold_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatesConfig {
+    #[serde(default = "default_check_on_launch")]
+    pub check_on_launch: bool,
 }
 
 // ── Default value functions ─────────────────────────────────────────────────
@@ -157,6 +183,19 @@ fn default_kb_close_session() -> String {
     "super+w".to_string()
 }
 
+fn default_max_blocks_per_session() -> u32 {
+    50
+}
+fn default_notifications_enabled() -> bool {
+    true
+}
+fn default_threshold_seconds() -> u32 {
+    10
+}
+fn default_check_on_launch() -> bool {
+    true
+}
+
 // ── Default trait implementations ───────────────────────────────────────────
 
 impl Default for KilnConfig {
@@ -167,6 +206,9 @@ impl Default for KilnConfig {
             scrollback: ScrollbackConfig::default(),
             performance: PerformanceConfig::default(),
             keybindings: KeybindingsConfig::default(),
+            persistence: PersistenceConfig::default(),
+            notifications: NotificationsConfig::default(),
+            updates: UpdatesConfig::default(),
         }
     }
 }
@@ -209,6 +251,31 @@ impl Default for KeybindingsConfig {
             new_window: default_kb_new_window(),
             new_session: default_kb_new_session(),
             close_session: default_kb_close_session(),
+        }
+    }
+}
+
+impl Default for PersistenceConfig {
+    fn default() -> Self {
+        Self {
+            max_blocks_per_session: default_max_blocks_per_session(),
+        }
+    }
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_notifications_enabled(),
+            threshold_seconds: default_threshold_seconds(),
+        }
+    }
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check_on_launch: default_check_on_launch(),
         }
     }
 }
@@ -259,6 +326,16 @@ search = "super+f"
 new_window = "super+n"
 new_session = "super+shift+n"
 close_session = "super+w"
+
+[persistence]
+max_blocks_per_session = 50
+
+[notifications]
+enabled = true
+threshold_seconds = 10
+
+[updates]
+check_on_launch = true
 "#
     )
 }

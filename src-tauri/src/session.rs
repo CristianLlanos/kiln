@@ -21,6 +21,8 @@ pub struct SessionSync {
     pub buffering: AtomicBool,
     /// Buffer for pty_stream data while waiting for the frontend to signal interactive_ready.
     pub interactive_buffer: Mutex<Vec<u8>>,
+    /// Signal from exit_interactive command to tell the parser to switch back to normal mode.
+    pub exit_interactive_requested: AtomicBool,
 }
 
 impl SessionSync {
@@ -30,6 +32,7 @@ impl SessionSync {
             manual_interactive: AtomicBool::new(false),
             buffering: AtomicBool::new(false),
             interactive_buffer: Mutex::new(Vec::new()),
+            exit_interactive_requested: AtomicBool::new(false),
         }
     }
 
@@ -227,6 +230,7 @@ impl SessionManager {
             .ok_or_else(|| format!("Session not found: {}", session_id))?;
         session.sync.manual_interactive.store(false, Ordering::SeqCst);
         session.sync.force_interactive.store(false, Ordering::SeqCst);
+        session.sync.exit_interactive_requested.store(true, Ordering::SeqCst);
         Ok(())
     }
 

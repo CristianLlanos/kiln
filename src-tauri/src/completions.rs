@@ -28,12 +28,17 @@ fn filesystem_completions(partial: &str, cwd: &str) -> Vec<CompletionItem> {
 
     let (dir, prefix) = if expanded.ends_with('/') {
         // User typed a full directory path with trailing slash — list contents
-        (PathBuf::from(&expanded), String::new())
+        let d = PathBuf::from(&expanded);
+        let resolved = if d.is_absolute() { d } else { PathBuf::from(cwd).join(d) };
+        (resolved, String::new())
     } else if expanded.contains('/') {
         // Split into parent dir + filename prefix
         let parent = path
             .parent()
-            .map(|p| p.to_path_buf())
+            .map(|p| {
+                let pb = p.to_path_buf();
+                if pb.is_absolute() { pb } else { PathBuf::from(cwd).join(pb) }
+            })
             .unwrap_or_else(|| PathBuf::from(cwd));
         let file_prefix = path
             .file_name()
@@ -231,8 +236,12 @@ fn read_shell_history() -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn get_completions(partial: String, cwd: String) -> Vec<CompletionItem> {
-    filesystem_completions(&partial, &cwd)
+pub fn get_completions(partial: String, cwd: String, dirs_only: Option<bool>) -> Vec<CompletionItem> {
+    let mut results = filesystem_completions(&partial, &cwd);
+    if dirs_only.unwrap_or(false) {
+        results.retain(|item| item.kind == "directory");
+    }
+    results
 }
 
 #[tauri::command]

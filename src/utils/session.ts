@@ -33,6 +33,12 @@ export function getTokenAtCursor(input: string, cursorPos: number): { token: str
   return { token: textBefore.substring(lastSpace + 1), tokenStart: lastSpace + 1 }
 }
 
+const DIRS_ONLY_COMMANDS = new Set(['cd', 'pushd', 'rmdir'])
+
+export function isDirsOnlyCommand(firstToken: string): boolean {
+  return DIRS_ONLY_COMMANDS.has(firstToken)
+}
+
 export function longestCommonPrefix(strings: string[]): string {
   if (strings.length === 0) return ''
   let prefix = strings[0]

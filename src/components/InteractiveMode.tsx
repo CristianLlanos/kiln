@@ -1,34 +1,65 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useMemo } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { useStore } from '../store'
+import type { KilnTheme } from '../store/types'
 import '@xterm/xterm/css/xterm.css'
 
-const KILN_THEME = {
-  background: '#0F0F14',
-  foreground: '#E8E8F0',
-  cursor: '#7F52FF',
-  cursorAccent: '#0F0F14',
-  selectionBackground: '#7F52FF40',
+const DEFAULT_XTERM_THEME = {
+  background: '#0D0D12',
+  foreground: '#E4E4EF',
+  cursor: '#8B6AFF',
+  cursorAccent: '#0D0D12',
+  selectionBackground: '#8B6AFF40',
   selectionForeground: '#FFFFFF',
-  black: '#16161E',
-  red: '#E24462',
-  green: '#4ADE80',
-  yellow: '#E2B340',
-  blue: '#7F52FF',
-  magenta: '#B125EA',
-  cyan: '#56B6C2',
-  white: '#A0A0B8',
-  brightBlack: '#2A2A3A',
-  brightRed: '#FF6B81',
-  brightGreen: '#69FF94',
-  brightYellow: '#FFFFA5',
-  brightBlue: '#A78BFA',
-  brightMagenta: '#D946EF',
-  brightCyan: '#7EDCE2',
-  brightWhite: '#E8E8F0',
+  black: '#15151E',
+  red: '#D09088',
+  green: '#5CD89A',
+  yellow: '#F0C060',
+  blue: '#8B6AFF',
+  magenta: '#B44AEA',
+  cyan: '#60C8D0',
+  white: '#B0B0C8',
+  brightBlack: '#404058',
+  brightRed: '#D8A098',
+  brightGreen: '#80EAAA',
+  brightYellow: '#FFD880',
+  brightBlue: '#AA90FF',
+  brightMagenta: '#D070F0',
+  brightCyan: '#80E0E8',
+  brightWhite: '#E4E4EF',
+}
+
+function buildXtermTheme(theme: KilnTheme | null) {
+  if (!theme) return DEFAULT_XTERM_THEME
+  const { colors, terminal } = theme
+  return {
+    background: colors.background,
+    foreground: colors.text_primary,
+    cursor: colors.accent_primary,
+    cursorAccent: colors.background,
+    selectionBackground: colors.accent_primary + '40',
+    selectionForeground: '#FFFFFF',
+    black: terminal.black,
+    red: terminal.red,
+    green: terminal.green,
+    yellow: terminal.yellow,
+    blue: terminal.blue,
+    magenta: terminal.magenta,
+    cyan: terminal.cyan,
+    white: terminal.white,
+    brightBlack: terminal.bright_black,
+    brightRed: terminal.bright_red,
+    brightGreen: terminal.bright_green,
+    brightYellow: terminal.bright_yellow,
+    brightBlue: terminal.bright_blue,
+    brightMagenta: terminal.bright_magenta,
+    brightCyan: terminal.bright_cyan,
+    brightWhite: terminal.bright_white,
+  }
 }
 
 interface PtyStreamPayload {
@@ -44,6 +75,15 @@ export function InteractiveMode({ sessionId }: InteractiveModeProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const storeTheme = useStore((s) => s.theme)
+  const xtermTheme = useMemo(() => buildXtermTheme(storeTheme), [storeTheme])
+
+  // Update xterm theme when store theme changes
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.theme = xtermTheme
+    }
+  }, [xtermTheme])
 
   const sendResize = useCallback(
     (cols: number, rows: number) => {
@@ -56,7 +96,7 @@ export function InteractiveMode({ sessionId }: InteractiveModeProps) {
     if (!containerRef.current) return
 
     const terminal = new Terminal({
-      theme: KILN_THEME,
+      theme: xtermTheme,
       fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.4,
@@ -145,13 +185,14 @@ export function InteractiveMode({ sessionId }: InteractiveModeProps) {
       terminalRef.current = null
       fitAddonRef.current = null
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, sendResize])
 
   return (
     <div
       ref={containerRef}
       className="w-full h-full"
-      style={{ backgroundColor: KILN_THEME.background }}
+      style={{ backgroundColor: xtermTheme.background }}
     />
   )
 }

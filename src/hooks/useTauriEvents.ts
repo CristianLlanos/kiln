@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { invoke } from '@tauri-apps/api/core'
 import { useStore } from '../store'
 import type { KilnConfig, SessionMode, StyledSegment } from '../store/types'
 
@@ -72,7 +73,31 @@ export function useTauriEvents() {
     unlisteners.push(
       listen<BlockCompletePayload>('block_complete', (event) => {
         const { session_id, block_id, exit_code, duration } = event.payload
-        useStore.getState().completeBlock(session_id, block_id, exit_code, duration)
+        const store = useStore.getState()
+        store.completeBlock(session_id, block_id, exit_code, duration)
+
+        // Notification for long-running commands
+        const config = store.config
+        if (
+          config?.notifications?.enabled &&
+          duration > (config.notifications.threshold_seconds * 1000) &&
+          !document.hasFocus()
+        ) {
+          const session = store.sessions[session_id]
+          const block = session?.blocks.find((b) => b.id === block_id)
+          const command = block?.command ?? 'Command'
+          const durationSec = (duration / 1000).toFixed(1)
+          try {
+            const notification = new Notification(`Kiln — Command finished`, {
+              body: `${exit_code === 0 ? '✓' : '✗'} ${command} (${durationSec}s)`,
+            })
+            notification.onclick = () => {
+              window.focus()
+            }
+          } catch {
+            // Notifications not supported or permission denied
+          }
+        }
       })
     )
 
@@ -85,8 +110,14 @@ export function useTauriEvents() {
 
     unlisteners.push(
       listen<SessionErrorPayload>('session_error', (event) => {
-        const { session_id, error } = event.payload
-        useStore.getState().setSessionError(session_id, error)
+        const { session_id } = event.payload
+        // Shell exited — silently respawn the PTY so the session stays usable.
+        // The session keeps its blocks and history; only the shell process restarts.
+        invoke('create_session', { sessionId: session_id }).catch((e) => {
+          console.error('Failed to respawn session PTY:', e)
+          // Only show the error if respawn fails
+          useStore.getState().setSessionError(session_id, event.payload.error)
+        })
       })
     )
 

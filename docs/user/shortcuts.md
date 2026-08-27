@@ -36,6 +36,14 @@ All shortcuts use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `Escape` | Close palette |
 | Type anything | Fuzzy filter by category or action name |
 
+### Theme Picker (via Command Palette)
+
+| Shortcut | Action |
+|---|---|
+| `↑` / `↓` | Navigate theme list |
+| `Enter` | Apply selected theme |
+| `Escape` | Go back to command list |
+
 ## Search
 
 | Shortcut | Action |

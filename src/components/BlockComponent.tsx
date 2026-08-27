@@ -196,8 +196,8 @@ function handleLinkClick(e: React.MouseEvent, link: DetectedLink) {
   if (link.type === 'url') {
     invoke('open_url', { url: link.href }).catch(console.error)
   } else {
-    // File path: copy to clipboard
-    navigator.clipboard.writeText(link.href)
+    // File path: open with system default app
+    invoke('open_path', { path: link.href }).catch(console.error)
   }
 }
 
@@ -226,7 +226,7 @@ function renderSegmentWithLinks(
         key={k++}
         style={style}
         className="text-accent underline cursor-pointer"
-        title={link.type === 'path' ? `Click to copy: ${link.href}` : link.href}
+        title={link.type === 'path' ? `Open: ${link.href}` : link.href}
         onClick={(e) => handleLinkClick(e, link)}
       >
         {text.slice(link.start, link.end)}

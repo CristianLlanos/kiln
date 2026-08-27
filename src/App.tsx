@@ -14,8 +14,10 @@ import { WelcomeScreen } from './components/WelcomeScreen'
 import { SystemMessage } from './components/SystemMessage'
 import { Search } from './components/Search'
 import { CommandPalette } from './components/CommandPalette'
-import type { CompletionItem, KilnConfig, ShellIntegrationStatus } from './store/types'
-import { shortenHomePath, longestCommonPrefix, isMac, getTokenAtCursor } from './utils/session'
+import type { CompletionItem, KilnConfig, KilnTheme, ShellIntegrationStatus } from './store/types'
+import { shortenHomePath, longestCommonPrefix, isMac, getTokenAtCursor, isDirsOnlyCommand } from './utils/session'
+import { checkForUpdates } from './utils/updater'
+import { applyThemeColors } from './utils/theme'
 
 function Header() {
   const activeSessionId = useStore((s) => s.activeSessionId)
@@ -25,6 +27,7 @@ function Header() {
   const setTriggerRename = useStore((s) => s.setTriggerRename)
   const sessionName = useActiveSessionName()
   const sessionMode = useActiveSessionMode()
+  const updateAvailable = useStore((s) => s.updateAvailable)
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
@@ -109,7 +112,15 @@ function Header() {
         <span className="ml-3 text-xs text-accent">Interactive mode</span>
       )}
 
-      <span className="ml-auto text-xs text-text-secondary/50">
+      {updateAvailable && (
+        <button
+          className="ml-auto px-2 py-0.5 bg-accent/20 text-accent text-xs rounded hover:bg-accent/30 transition-colors mr-3"
+          onClick={() => invoke('open_url', { url: updateAvailable.url })}
+        >
+          Update {updateAvailable.version}
+        </button>
+      )}
+      <span className={`text-xs text-text-secondary/50 ${updateAvailable ? '' : 'ml-auto'}`}>
         {isMac ? '⌘E' : 'Ctrl+E'}
       </span>
     </header>
@@ -120,64 +131,110 @@ function sanitizeFontFamily(raw: string): string {
   return raw.replace(/[;"'{}\\<>]/g, '')
 }
 
-/** Apply appearance config as CSS custom properties on #root */
-function applyAppearanceConfig(config: KilnConfig) {
-  const root = document.getElementById('root')
-  if (!root) return
-  const safeFontFamily = sanitizeFontFamily(config.appearance.font_family)
-  root.style.setProperty('--config-font-family', `"${safeFontFamily}", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace`)
-  root.style.setProperty('--config-font-size', `${config.appearance.font_size}px`)
-}
-
 export default function App() {
   const shellState = useStore((s) => s.shellState)
-  const setShellState = useStore((s) => s.setShellState)
-  const setConfig = useStore((s) => s.setConfig)
-  const config = useStore((s) => s.config)
-  const createNewSession = useStore((s) => s.createNewSession)
+  const themeName = useStore((s) => s.config?.appearance.theme)
+  const fontFamily = useStore((s) => s.config?.appearance.font_family)
+  const fontSize = useStore((s) => s.config?.appearance.font_size)
+  const checkOnLaunch = useStore((s) => s.config?.updates?.check_on_launch)
+  const initDone = useRef(false)
 
   useTauriEvents()
   useKeyboardShortcuts()
 
-  // Load config on mount
+  // Load config on mount (once)
   useEffect(() => {
-    async function loadConfig() {
-      try {
-        const cfg = await invoke<KilnConfig>('get_config')
-        setConfig(cfg)
-      } catch (e) {
-        console.error('Failed to load config:', e)
-      }
-    }
-    loadConfig()
-  }, [setConfig])
+    invoke<KilnConfig>('get_config')
+      .then((cfg) => useStore.getState().setConfig(cfg))
+      .catch((e) => console.error('Failed to load config:', e))
+  }, [])
 
-  // Apply appearance whenever config changes (initial load + hot-reload)
+  // Apply font config when it changes
   useEffect(() => {
-    if (config) {
-      applyAppearanceConfig(config)
-    }
-  }, [config])
+    if (!fontFamily || !fontSize) return
+    const root = document.getElementById('root')
+    if (!root) return
+    const safe = sanitizeFontFamily(fontFamily)
+    root.style.setProperty('--config-font-family', `"${safe}", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace`)
+    root.style.setProperty('--config-font-size', `${fontSize}px`)
+  }, [fontFamily, fontSize])
 
-  // Check shell integration on mount; skip welcome if already installed
+  // Load and apply theme when theme name changes
   useEffect(() => {
+    if (!themeName) return
+    invoke<KilnTheme>('get_theme', { name: themeName })
+      .then((theme) => {
+        useStore.getState().setTheme(theme)
+        applyThemeColors(theme)
+      })
+      .catch((e) => console.error('Failed to load theme:', e))
+  }, [themeName])
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  }, [])
+
+  // Check shell integration on mount; restore persisted sessions or create new
+  useEffect(() => {
+    if (initDone.current) return
+    initDone.current = true
+
     async function checkIntegration() {
       try {
         const status = await invoke<ShellIntegrationStatus>('check_shell_integration')
         const fullyInstalled = status.installed && status.in_rc
         if (fullyInstalled) {
-          setShellState('installed')
-          await createNewSession()
+          useStore.getState().setShellState('installed')
+
+          // Try to restore persisted sessions
+          try {
+            const stateJson = await invoke<string | null>('load_session_state')
+            if (stateJson) {
+              useStore.getState().restoreState(stateJson)
+            }
+          } catch (e) {
+            console.error('Failed to restore session state:', e)
+          }
+
+          await useStore.getState().createNewSession()
         } else {
-          setShellState('pending')
+          useStore.getState().setShellState('pending')
         }
       } catch (e) {
         console.error('Failed to check shell integration:', e)
-        setShellState('pending')
+        useStore.getState().setShellState('pending')
       }
     }
     checkIntegration()
-  }, [setShellState, createNewSession])
+  }, [])
+
+  // Auto-save every 30 seconds + save on window close
+  useEffect(() => {
+    const interval = setInterval(() => { useStore.getState().saveState() }, 30_000)
+    const handler = () => { useStore.getState().saveState() }
+    window.addEventListener('beforeunload', handler)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('beforeunload', handler)
+    }
+  }, [])
+
+  // Check for updates on launch and every 24 hours
+  useEffect(() => {
+    if (!checkOnLaunch) return
+
+    async function doCheck() {
+      const update = await checkForUpdates()
+      if (update) useStore.getState().setUpdateAvailable(update)
+    }
+
+    doCheck()
+    const interval = setInterval(doCheck, 24 * 60 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [checkOnLaunch])
 
   if (shellState === 'checking') {
     return <div className="flex flex-col h-full bg-bg" />
@@ -265,7 +322,9 @@ function MainView() {
   const lastCwd = sessionCwd
 
   // Autocomplete hook — only active when not running a command
-  useCompletions(isCommandRunning ? '' : input, lastCwd)
+  const inputFirstToken = input.trim().split(/\s+/)[0]
+  const dirsOnlyCompletion = isDirsOnlyCommand(inputFirstToken)
+  useCompletions(isCommandRunning ? '' : input, lastCwd, dirsOnlyCompletion)
 
   // Auto-resize textarea (respects manual height from drag handle)
   const resizeTextarea = useCallback(() => {
@@ -419,9 +478,28 @@ function MainView() {
     if (e.key === 'Tab' && !isCommandRunning && input.trim()) {
       e.preventDefault()
 
+      const dirsOnly = isDirsOnlyCommand(input.trim().split(/\s+/)[0])
+
       if (completionsVisible && completions.length > 0) {
-        // If current token exactly matches a completion, nothing to complete
         const { token: currentToken } = getTokenAtCursor(input, inputRef.current?.selectionStart ?? input.length)
+
+        // If current token is a completed directory (ends with /), descend into it
+        if (currentToken.endsWith('/') && completions.find((c) => c.text === currentToken && c.kind === 'directory')) {
+          dismissCompletions()
+          invoke<CompletionItem[]>('get_completions', { partial: currentToken, cwd: lastCwd, dirsOnly }).catch(() => []).then((fsResults) => {
+            if (fsResults.length === 0) return
+            useStore.getState().setCompletions(fsResults)
+            useStore.getState().setCompletionsArrowActive(true)
+            if (fsResults.length === 1) {
+              requestAnimationFrame(() => acceptCompletion())
+            } else {
+              fillLongestPrefix(input, inputRef.current, fsResults.map((c) => c.text), setInput, resizeTextarea)
+            }
+          })
+          return
+        }
+
+        // If current token exactly matches a completion, nothing to complete
         if (completions.find((c) => c.text === currentToken)) {
           dismissCompletions()
           return
@@ -440,8 +518,22 @@ function MainView() {
         // Completions not visible — fetch immediately and fill common prefix
         const lastToken = input.split(/\s+/).pop() ?? ''
         if (lastToken) {
+          // If token ends with /, fetch directory contents directly (skip history)
+          if (lastToken.endsWith('/')) {
+            invoke<CompletionItem[]>('get_completions', { partial: lastToken, cwd: lastCwd, dirsOnly }).catch(() => []).then((fsResults) => {
+              if (fsResults.length === 0) return
+              useStore.getState().setCompletions(fsResults)
+              useStore.getState().setCompletionsArrowActive(true)
+              if (fsResults.length === 1) {
+                requestAnimationFrame(() => acceptCompletion())
+              } else {
+                fillLongestPrefix(input, inputRef.current, fsResults.map((c) => c.text), setInput, resizeTextarea)
+              }
+            })
+            return
+          }
           Promise.all([
-            invoke<CompletionItem[]>('get_completions', { partial: lastToken, cwd: lastCwd }).catch(() => []),
+            invoke<CompletionItem[]>('get_completions', { partial: lastToken, cwd: lastCwd, dirsOnly }).catch(() => []),
             invoke<CompletionItem[]>('get_history_completions', { partial: input }).catch(() => []),
           ]).then(([fsResults, histResults]) => {
             const all: CompletionItem[] = [...fsResults]
@@ -592,6 +684,25 @@ function MainView() {
     }
     window.addEventListener('keydown', handleGlobalKeydown)
     return () => window.removeEventListener('keydown', handleGlobalKeydown)
+  }, [])
+
+  // Intercept ALL link clicks — never let the webview navigate away
+  useEffect(() => {
+    function handleLinkClick(e: MouseEvent) {
+      const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null
+      if (!anchor) return
+      const href = anchor.getAttribute('href')
+      if (!href || href.startsWith('#')) return
+      e.preventDefault()
+      if (href.startsWith('http://') || href.startsWith('https://')) {
+        invoke('open_url', { url: href })
+      } else {
+        // Relative or local path — open with system default app
+        invoke('open_path', { path: href })
+      }
+    }
+    document.addEventListener('click', handleLinkClick)
+    return () => document.removeEventListener('click', handleLinkClick)
   }, [])
 
   // Input resize handle

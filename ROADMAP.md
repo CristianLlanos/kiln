@@ -144,7 +144,7 @@ interface StyledSegment {
 
 ```
 ┌──────────────────────────────────────────┐
-│ [≡] Kiln     kiln             [Cmd+E]   │  ← thin header
+│ [≡] Kiln     kiln             [Cmd+E]    │  ← thin header
 ├──────────────────────────────────────────┤
 │  ┌─ block ────────────────────────────┐  │
 │  │ $ git status                       │  │
@@ -175,13 +175,13 @@ JetBrains-style popup for switching between sessions:
 │ 🔍 filter...                               │
 │                                            │
 │ ● kiln                    ~/Code/kiln      │
-│   pnpm dev • running                      │
+│   pnpm dev • running                       │
 │                                            │
 │ ○ api-server              ~/Code/api       │
-│   git push • 2m ago                       │
+│   git push • 2m ago                        │
 │                                            │
 │ ○ dotfiles                ~/dotfiles       │
-│   vim .zshrc • 15m ago                    │
+│   vim .zshrc • 15m ago                     │
 └────────────────────────────────────────────┘
 ```
 
@@ -393,8 +393,15 @@ new_window = "super+n"
 new_session = "super+shift+n"
 close_session = "super+w"
 
+[persistence]
+max_blocks_per_session = 50   # blocks to restore per session (0 = metadata only)
+
+[notifications]
+enabled = true                # OS notifications for long-running commands
+threshold_seconds = 10        # minimum duration before notifying
+
 [updates]
-check_on_launch = true    # set false to disable
+check_on_launch = true        # set false to disable all update checks
 ```
 
 ## Phase 2: High Value
@@ -463,12 +470,43 @@ check_on_launch = true    # set false to disable
 
 ## Phase 3: Nice to Have
 
-- [ ] Light theme + custom color schemes
-- [ ] Session persistence — restore windows/sessions after restart
-- [ ] Notifications when long-running commands finish
-- [ ] Auto-updater via Tauri updater plugin + GitHub Releases
-  - Check on launch, subtle header notification, no forced updates
-  - Config option to disable update checks
+### Theming
+- [x] Light theme (Kiln Light) — inverted grayscale, same accent `#7F52FF`
+- [x] `.kiln-theme` TOML format — `[colors]` (UI palette) + `[terminal]` (ANSI 16 for xterm.js)
+- [x] Full-spec required — all color keys must be defined, no inheritance/fallback
+- [x] Built-in themes bundled as Tauri resources, same format as user themes
+- [x] User themes loaded from `~/.config/kiln/themes/*.toml`
+- [x] Config: `appearance.theme = "kiln-dark"` — resolves name against built-in first, then user dir
+- [x] Command palette: "Switch Theme..." lists all available themes
+- [x] Theme selection persists to `kiln.toml`
+- [x] CSS custom properties driven by active theme — frontend reads theme, sets variables
+
+### Markdown Preview Enhancement
+- [x] Add `highlight.js` for syntax-highlighted code blocks in markdown previews
+- [x] Curated language set: js, ts, python, rust, go, java, bash, json, yaml, toml, sql, css, html, diff, markdown, c, cpp
+- [x] Theme-aware: dark highlight theme for dark Kiln themes, light for light (detect via background luminance for custom themes)
+
+### Session Persistence
+- [x] Persist window positions, sizes, and session state on quit and every ~30s (crash protection)
+- [x] Restore on launch: windows, sessions, names, cwds, active session per window
+- [x] Restore last 50 blocks per session (commands + styled output)
+- [x] Storage: MessagePack in `~/.config/kiln/state/`
+- [x] Running commands at quit time restore as `interrupted` status with captured output
+- [x] Configurable block limit: `persistence.max_blocks_per_session = 50`
+
+### Notifications
+- [x] OS notification when a command finishes and took > threshold seconds
+- [x] Only fires when Kiln window is not focused
+- [x] Notification shows: command name, duration, success/error status
+- [x] Click notification → focus Kiln window
+- [x] Uses Web Notifications API (works in Tauri webview on all platforms)
+- [x] Config: `notifications.enabled = true`, `notifications.threshold_seconds = 10`
+
+### Auto-Updater
+- [x] Check for updates on launch and every 24h while running
+- [x] Subtle header badge: "Update vX.Y.Z" — click to open release page
+- [x] Checks GitHub Releases API, compares semver
+- [x] Config: `updates.check_on_launch = true` (set false to disable)
 
 ## Future Exploration
 

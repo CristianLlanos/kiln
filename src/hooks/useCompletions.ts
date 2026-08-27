@@ -11,7 +11,7 @@ function extractLastToken(input: string): string {
   return tokens[tokens.length - 1] ?? ''
 }
 
-export function useCompletions(input: string, cwd: string) {
+export function useCompletions(input: string, cwd: string, dirsOnly?: boolean) {
   const setCompletions = useStore((s) => s.setCompletions)
   const dismissCompletions = useStore((s) => s.dismissCompletions)
   // Subscribe only to the active session's command history, not the entire sessions map
@@ -40,6 +40,7 @@ export function useCompletions(input: string, cwd: string) {
         const fsResults = await invoke<CompletionItem[]>('get_completions', {
           partial: lastToken,
           cwd,
+          dirsOnly: dirsOnly ?? false,
         })
         results.push(...fsResults)
       } catch (e) {
@@ -97,7 +98,7 @@ export function useCompletions(input: string, cwd: string) {
     if (lastInputRef.current === value) {
       setCompletions(capped)
     }
-  }, [cwd, commandHistory, setCompletions, dismissCompletions])
+  }, [cwd, commandHistory, dirsOnly, setCompletions, dismissCompletions])
 
   useEffect(() => {
     if (debounceRef.current) {

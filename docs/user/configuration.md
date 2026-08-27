@@ -56,6 +56,8 @@ Content type is detected first by file extension in the command (e.g., `cat data
 
 The `font_family` value is used as the primary font in a system monospace font stack. If the specified font is not installed, the system falls back to the next available monospace font.
 
+The `theme` value is a theme name. Kiln looks for it in built-in themes first, then in `~/.config/kiln/themes/`. See **Themes** below for details on creating custom themes.
+
 ### `[scrollback]`
 
 | Option      | Type  | Default | Description                        |
@@ -103,6 +105,108 @@ close_session = "super+w"
 
 On macOS, `super` maps to `Cmd`. On Windows and Linux, `super` maps to `Ctrl`.
 
+### `[persistence]`
+
+| Option                   | Type  | Default | Description                                    |
+|--------------------------|-------|---------|------------------------------------------------|
+| `max_blocks_per_session` | `int` | `50`    | Number of blocks to restore per session (0 = metadata only) |
+
+```toml
+[persistence]
+max_blocks_per_session = 50
+```
+
+Kiln saves session state (windows, sessions, command history with output) to `~/.config/kiln/state/` on quit and every ~30 seconds. On next launch, windows and sessions are restored with their last N blocks. Set to `0` to restore sessions without command history.
+
+### `[notifications]`
+
+| Option              | Type   | Default | Description                                           |
+|---------------------|--------|---------|-------------------------------------------------------|
+| `enabled`           | `bool` | `true`  | Enable OS notifications for long-running commands     |
+| `threshold_seconds` | `int`  | `10`    | Minimum command duration (seconds) before notifying   |
+
+```toml
+[notifications]
+enabled = true
+threshold_seconds = 10
+```
+
+When a command runs longer than the threshold and the Kiln window is not focused, an OS notification is sent on completion. The notification shows the command name, duration, and success/error status. Click it to focus Kiln and scroll to the completed block.
+
+### `[updates]`
+
+| Option            | Type   | Default | Description                         |
+|-------------------|--------|---------|-------------------------------------|
+| `check_on_launch` | `bool` | `true`  | Check for updates on launch and periodically |
+
+```toml
+[updates]
+check_on_launch = true
+```
+
+When enabled, Kiln checks GitHub Releases for new versions on launch and every 24 hours. If an update is available, a subtle badge appears in the header. Click it to download in the background -- a "Restart to update" button appears when the download completes. Set to `false` to disable all update checks.
+
+## Themes
+
+Kiln ships with two built-in themes: **Kiln Dark** (default) and **Kiln Light**.
+
+### Switching themes
+
+From the command palette (`Cmd+P`), select **Switch Theme...** to see all available themes. Your selection is saved to `kiln.toml`.
+
+### Custom themes
+
+Create a `.toml` file in `~/.config/kiln/themes/`:
+
+```toml
+# ~/.config/kiln/themes/my-theme.toml
+name = "My Theme"
+author = "Your Name"
+
+[colors]
+background = "#0F0F14"
+surface = "#16161E"
+surface_raised = "#1E1E28"
+border = "#2A2A3A"
+text_primary = "#E8E8F0"
+text_secondary = "#8888A0"
+accent_primary = "#7F52FF"
+accent_secondary = "#B125EA"
+error = "#E24462"
+success = "#4ADE80"
+warning = "#F59E0B"
+
+[terminal]
+# ANSI 16 colors for interactive mode (xterm.js)
+black = "#16161E"
+red = "#E24462"
+green = "#4ADE80"
+yellow = "#F59E0B"
+blue = "#7F52FF"
+magenta = "#B125EA"
+cyan = "#56B6C2"
+white = "#E8E8F0"
+bright_black = "#4A4A5A"
+bright_red = "#FF6B81"
+bright_green = "#69FF94"
+bright_yellow = "#FFDA6B"
+bright_blue = "#9F75FF"
+bright_magenta = "#D158F8"
+bright_cyan = "#7DDBEA"
+bright_white = "#FFFFFF"
+```
+
+All color keys are required -- Kiln will reject a theme file with missing keys. Copy a built-in theme as a starting point: the built-in theme files use the same format.
+
+Then reference it in your config:
+
+```toml
+[appearance]
+theme = "my-theme"
+```
+
+Kiln resolves the theme name by checking built-in themes first, then `~/.config/kiln/themes/`.
+
 ## Hot Reload
 
 Kiln watches `~/.config/kiln/config.toml` for changes. When the file is saved, the new configuration is loaded and applied immediately -- no restart required. This works with editors that do atomic saves (write to temp file + rename).
@@ -138,4 +242,32 @@ font_family = "Fira Code"
 ```toml
 [performance]
 max_lines_per_block = 100000
+```
+
+### Use light theme
+
+```toml
+[appearance]
+theme = "kiln-light"
+```
+
+### Disable notifications
+
+```toml
+[notifications]
+enabled = false
+```
+
+### Disable update checks
+
+```toml
+[updates]
+check_on_launch = false
+```
+
+### Restore sessions without command history
+
+```toml
+[persistence]
+max_blocks_per_session = 0
 ```

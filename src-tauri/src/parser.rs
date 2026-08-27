@@ -111,38 +111,55 @@ impl AnsiStyle {
 
 // ── Standard ANSI color palette ─────────────────────────────────────────────
 
-fn ansi_color_to_hex(n: u8) -> Option<String> {
-    let hex = match n {
-        0 => "#000000",
-        1 => "#cc0000",
-        2 => "#4e9a06",
-        3 => "#c4a000",
-        4 => "#3465a4",
-        5 => "#75507b",
-        6 => "#06989a",
-        7 => "#d3d7cf",
-        8 => "#555753",
-        9 => "#ef2929",
-        10 => "#8ae234",
-        11 => "#fce94f",
-        12 => "#729fcf",
-        13 => "#ad7fa8",
-        14 => "#34e2e2",
-        15 => "#eeeeec",
+/// Load the ANSI 0-15 palette from the active theme's terminal colors.
+/// Falls back to sensible defaults if theme loading fails.
+fn theme_ansi_palette() -> [String; 16] {
+    let theme = crate::config::current();
+    let t = crate::theme::load_theme(&theme.appearance.theme);
+    match t {
+        Ok(t) => [
+            t.terminal.black,
+            t.terminal.red,
+            t.terminal.green,
+            t.terminal.yellow,
+            t.terminal.blue,
+            t.terminal.magenta,
+            t.terminal.cyan,
+            t.terminal.white,
+            t.terminal.bright_black,
+            t.terminal.bright_red,
+            t.terminal.bright_green,
+            t.terminal.bright_yellow,
+            t.terminal.bright_blue,
+            t.terminal.bright_magenta,
+            t.terminal.bright_cyan,
+            t.terminal.bright_white,
+        ],
+        Err(_) => [
+            "#15151E".into(), "#D88090".into(), "#5CD89A".into(), "#F0C060".into(),
+            "#8B6AFF".into(), "#B44AEA".into(), "#60C8D0".into(), "#B0B0C8".into(),
+            "#404058".into(), "#E0989E".into(), "#80EAAA".into(), "#FFD880".into(),
+            "#AA90FF".into(), "#D070F0".into(), "#80E0E8".into(), "#E4E4EF".into(),
+        ],
+    }
+}
+
+fn ansi_color_to_hex(n: u8, palette: &[String; 16]) -> Option<String> {
+    match n {
+        0..=15 => Some(palette[n as usize].clone()),
         16..=231 => {
             let idx = n - 16;
             let r = (idx / 36) % 6;
             let g = (idx / 6) % 6;
             let b = idx % 6;
             let to_val = |c: u8| if c == 0 { 0u8 } else { 55 + 40 * c };
-            return Some(format!("#{:02x}{:02x}{:02x}", to_val(r), to_val(g), to_val(b)));
+            Some(format!("#{:02x}{:02x}{:02x}", to_val(r), to_val(g), to_val(b)))
         }
         232..=255 => {
             let v = 8 + 10 * (n - 232);
-            return Some(format!("#{:02x}{:02x}{:02x}", v, v, v));
+            Some(format!("#{:02x}{:02x}{:02x}", v, v, v))
         }
-    };
-    Some(hex.to_string())
+    }
 }
 
 // ── UTF-8 decoder ───────────────────────────────────────────────────────────
@@ -282,6 +299,9 @@ pub struct StreamParser {
     osc133_seen: bool,
     created_at: Instant,
     fallback_emitted: bool,
+
+    // Theme ANSI palette (loaded once at session start)
+    ansi_palette: [String; 16],
 }
 
 impl StreamParser {
@@ -314,6 +334,7 @@ impl StreamParser {
             osc133_seen: false,
             created_at: Instant::now(),
             fallback_emitted: false,
+            ansi_palette: theme_ansi_palette(),
         }
     }
 
@@ -414,6 +435,13 @@ impl StreamParser {
             match reader.read(&mut buf) {
                 Ok(0) => {
                     // PTY closed — shell process exited
+                    // Switch back to normal mode so the UI shows the error, not a dead terminal
+                    if parser.session_mode != SessionMode::Normal {
+                        parser.session_mode = SessionMode::Normal;
+                        parser.emit_mode_switch(&SessionMode::Normal);
+                        // Give the frontend time to unmount xterm.js before showing error
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
                     parser.finalize_running_block_with_error();
                     parser.emit_session_error("Shell process exited");
                     break;
@@ -435,6 +463,15 @@ impl StreamParser {
 
                     // Check fallback timeout before processing
                     parser.check_fallback_timeout();
+
+                    // Check if exit_interactive was requested (Cmd+I toggle off)
+                    if parser.sync.exit_interactive_requested.load(Ordering::SeqCst) {
+                        parser.sync.exit_interactive_requested.store(false, Ordering::SeqCst);
+                        if parser.session_mode == SessionMode::Interactive {
+                            parser.session_mode = SessionMode::Normal;
+                            parser.emit_mode_switch(&SessionMode::Normal);
+                        }
+                    }
 
                     match parser.session_mode {
                         SessionMode::Interactive | SessionMode::Fallback => {
@@ -458,7 +495,11 @@ impl StreamParser {
                     }
                 }
                 Err(e) => {
-                    // PTY read error
+                    // PTY read error — switch to normal mode so UI shows the error
+                    if parser.session_mode != SessionMode::Normal {
+                        parser.session_mode = SessionMode::Normal;
+                        parser.emit_mode_switch(&SessionMode::Normal);
+                    }
                     parser.finalize_running_block_with_error();
                     parser.emit_session_error(&format!("PTY read error: {}", e));
                     break;
@@ -738,16 +779,16 @@ impl StreamParser {
                 24 => self.style.underline = false,
 
                 // Foreground 8-color
-                30..=37 => self.style.fg = ansi_color_to_hex((code - 30) as u8),
+                30..=37 => self.style.fg = ansi_color_to_hex((code - 30) as u8, &self.ansi_palette),
                 39 => self.style.fg = None,
                 // Foreground bright
-                90..=97 => self.style.fg = ansi_color_to_hex((code - 90 + 8) as u8),
+                90..=97 => self.style.fg = ansi_color_to_hex((code - 90 + 8) as u8, &self.ansi_palette),
 
                 // Background 8-color
-                40..=47 => self.style.bg = ansi_color_to_hex((code - 40) as u8),
+                40..=47 => self.style.bg = ansi_color_to_hex((code - 40) as u8, &self.ansi_palette),
                 49 => self.style.bg = None,
                 // Background bright
-                100..=107 => self.style.bg = ansi_color_to_hex((code - 100 + 8) as u8),
+                100..=107 => self.style.bg = ansi_color_to_hex((code - 100 + 8) as u8, &self.ansi_palette),
 
                 // Extended foreground: 256-color and RGB
                 38 => {
@@ -773,7 +814,7 @@ impl StreamParser {
         let mode: u16 = parts[i + 1].parse().unwrap_or(0);
         if mode == 5 && i + 2 < parts.len() {
             let n: u8 = parts[i + 2].parse().unwrap_or(0);
-            let color = ansi_color_to_hex(n);
+            let color = ansi_color_to_hex(n, &self.ansi_palette);
             if is_fg {
                 self.style.fg = color;
             } else {
@@ -974,13 +1015,17 @@ impl StreamParser {
             b"\x1b[?47l",
         ];
 
-        for exit_seq in ALT_EXIT_SEQS {
-            if data.len() >= exit_seq.len() {
-                for window in data.windows(exit_seq.len()) {
-                    if window == *exit_seq {
-                        self.session_mode = SessionMode::Normal;
-                        self.emit_mode_switch(&SessionMode::Normal);
-                        return;
+        // Skip alt screen exit when in manual interactive mode (Cmd+I) —
+        // user controls when to leave, not the program's alt screen sequences.
+        if !self.sync.manual_interactive.load(Ordering::SeqCst) {
+            for exit_seq in ALT_EXIT_SEQS {
+                if data.len() >= exit_seq.len() {
+                    for window in data.windows(exit_seq.len()) {
+                        if window == *exit_seq {
+                            self.session_mode = SessionMode::Normal;
+                            self.emit_mode_switch(&SessionMode::Normal);
+                            return;
+                        }
                     }
                 }
             }

@@ -34,11 +34,17 @@ Kiln has two layers: a Rust backend (Tauri) that manages PTY sessions and parses
 │  │              │  │ ANSI codes   │  │ file watch   │  │
 │  └──────┬───────┘  └──────┬───────┘  └──────────────┘  │
 │         │                 │                              │
-│         │    ┌────────────┴──────┐                       │
-│         └───>│   PTY (per shell) │                       │
-│              │   persistent      │                       │
-│              │   /bin/zsh        │                       │
-│              └───────────────────┘                       │
+│         │    ┌────────────┴──────┐   ┌──────────────┐   │
+│         └───>│   PTY (per shell) │   │ Theme Mgr    │   │
+│              │   persistent      │   │ load .toml   │   │
+│              │   /bin/zsh        │   │ ANSI palette │   │
+│              └───────────────────┘   └──────────────┘   │
+│                                                         │
+│  ┌──────────────┐                                       │
+│  │ Persistence  │                                       │
+│  │ MsgPack I/O  │                                       │
+│  │ auto-save    │                                       │
+│  └──────────────┘                                       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -108,8 +114,10 @@ Kiln has two layers: a Rust backend (Tauri) that manages PTY sessions and parses
 |---|---|
 | **Session Manager** | Creates/destroys PTY sessions, manages lifecycle per window |
 | **PTY** | Persistent shell process (`portable-pty`), reads/writes byte stream |
-| **Stream Parser** | Reads PTY bytes, detects OSC 133 markers, alt screen, ANSI codes. Converts to structured events. Batches output at 16ms intervals. Enforces block buffer cap (50k lines). |
+| **Stream Parser** | Reads PTY bytes, detects OSC 133 markers, alt screen, ANSI codes. Converts to structured events. Batches output at 16ms intervals. Enforces block buffer cap (50k lines). ANSI color palette loaded from active theme. |
 | **Config Manager** | Loads TOML config, watches for changes, emits config_changed events |
+| **Theme Manager** | Loads `.toml` theme files from built-in resources and `~/.config/kiln/themes/`. Provides UI colors (CSS custom properties) and terminal colors (ANSI 16 palette for xterm.js and the stream parser). |
+| **Persistence** | Saves/restores session state (windows, sessions, blocks) to `~/.config/kiln/state/` using MessagePack. Auto-saves every 30s and on quit. Dirty flag optimization skips writes when nothing changed. |
 | **Shell Integration** | Ships shell scripts to `~/.config/kiln/shell/`, manages installation |
 
 ### React Frontend
@@ -124,7 +132,11 @@ Kiln has two layers: a Rust backend (Tauri) that manages PTY sessions and parses
 | **SessionSwitcher** | `Cmd+E` popup. Fuzzy filter, keyboard navigation. |
 | **CommandPalette** | `Cmd+P` popup. Action search and execution. |
 | **Search** | `Cmd+F` bar. Regex support, match navigation, auto-expand collapsed blocks. |
-| **InteractiveMode** | Fullscreen xterm.js wrapper. Mounts/unmounts on mode switch. |
+| **InteractiveMode** | Fullscreen xterm.js wrapper. Mounts/unmounts on mode switch. xterm.js theme synced from active Kiln theme via memoized `buildXtermTheme`. |
+| **Theme Utils** | Shared `applyThemeColors` function (`src/utils/theme.ts`) applies CSS custom properties from the active theme to the document root. |
+| **Update Checker** | Checks GitHub Releases on launch + every 24h (`src/utils/updater.ts`). Caches results in localStorage to avoid redundant API calls. |
+| **Notifications** | Web Notifications API for long-running commands (>threshold). Only fires when window is unfocused. Click-to-focus. |
+| **usePaletteList** | Shared hook (`src/hooks/usePaletteList.ts`) for keyboard navigation in palette-style lists (command palette, theme picker). |
 
 ## Tauri IPC Contract
 
@@ -140,6 +152,11 @@ Kiln has two layers: a Rust backend (Tauri) that manages PTY sessions and parses
 | `get_config` | — | `Config` | Get current config |
 | `interactive_ready` | `session_id` | `base64 data` | Signal xterm.js is mounted, get buffered data |
 | `install_shell_integration` | `shell` | `Result` | Install shell hooks |
+| `get_themes` | — | `Theme[]` | List available themes (built-in + user) |
+| `set_theme` | `name` | `Result` | Apply a theme and persist to config |
+| `save_state` | `state` | `Result` | Persist session state to disk |
+| `load_state` | — | `State?` | Load persisted session state |
+| `open_path` | `path` | `Result` | Open a file path with system default app |
 
 ### Events (Rust → Frontend)
 
@@ -202,6 +219,11 @@ kiln/
       useTauriEvents.ts   # Subscribe to Rust events
       useAutoScroll.ts
       useKeyboardShortcuts.ts
+      usePaletteList.ts   # Shared palette keyboard navigation
+    utils/
+      theme.ts            # applyThemeColors (CSS custom properties)
+      updater.ts          # GitHub release checker
+      session.ts          # Session helpers (isDirsOnlyCommand, etc.)
     lib/
       ansi.ts             # ANSI-to-CSS utilities (if any client-side parsing needed)
     App.tsx
@@ -214,6 +236,11 @@ kiln/
       config.rs           # TOML config + hot-reload
       commands.rs         # Tauri command handlers
       shell_integration.rs # Shell script management
+      theme.rs            # Theme loading from resources + user dir
+      persistence.rs      # MessagePack session state save/load
+    themes/
+      kiln-dark.toml      # Built-in dark theme
+      kiln-light.toml     # Built-in light theme
     shell/
       kiln.zsh            # Zsh integration script
   docs/

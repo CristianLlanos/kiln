@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
-import type { Block, CompletionItem, KilnConfig, SearchMatch, Session, SessionMode, ShellIntegrationState, StyledSegment } from './types'
+import type { Block, CompletionItem, KilnConfig, KilnTheme, SearchMatch, Session, SessionMode, ShellIntegrationState, StyledSegment } from './types'
 import { appendToLines } from '../utils/segmentLines'
 
 interface AppState {
@@ -22,6 +22,14 @@ interface AppState {
   config: KilnConfig | null
   /** Whether the command palette popup is open */
   paletteOpen: boolean
+  /** Mode for the command palette: commands list or theme picker */
+  paletteMode: 'commands' | 'themes'
+  /** Loaded theme data */
+  theme: KilnTheme | null
+  /** Available update info, or null if up-to-date */
+  updateAvailable: { version: string; url: string } | null
+  /** Dirty flag — set when session data changes, cleared after save */
+  isDirty: boolean
 
   // Autocomplete state
   completions: CompletionItem[]
@@ -84,7 +92,16 @@ interface AppState {
 
   // Command palette
   setPaletteOpen: (open: boolean) => void
+  setPaletteMode: (mode: 'commands' | 'themes') => void
+  setTheme: (theme: KilnTheme) => void
   clearSessionOutput: () => void
+
+  // Update
+  setUpdateAvailable: (update: { version: string; url: string } | null) => void
+
+  // Persistence
+  saveState: () => Promise<void>
+  restoreState: (json: string) => void
 
   // Header rename trigger
   /** When true, the header rename input should activate */
@@ -167,6 +184,10 @@ export const useStore = create<AppState>((set, get) => ({
   shellState: 'checking' as ShellIntegrationState,
   config: null,
   paletteOpen: false,
+  paletteMode: 'commands' as const,
+  theme: null,
+  updateAvailable: null,
+  isDirty: false,
   triggerRename: false,
 
   // Autocomplete defaults
@@ -195,7 +216,12 @@ export const useStore = create<AppState>((set, get) => ({
   setCompletionIndex: (index) => set({ completionIndex: index }),
   setCompletionsVisible: (visible) => set({ completionsVisible: visible }),
   setCompletionsArrowActive: (active) => set({ completionsArrowActive: active }),
-  dismissCompletions: () => set({ completions: [], completionIndex: 0, completionsVisible: false, completionsArrowActive: false }),
+  dismissCompletions: () => {
+    const s = get()
+    // Skip if already dismissed to avoid creating a new [] reference
+    if (s.completions.length === 0 && !s.completionsVisible && !s.completionsArrowActive) return
+    set({ completions: [], completionIndex: 0, completionsVisible: false, completionsArrowActive: false })
+  },
 
   // Search actions
   setSearchOpen: (open) => {
@@ -358,43 +384,45 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
   setSessionCwd: (sessionId, cwd) =>
-    set((state) => updateSession(state, sessionId, () => ({ cwd }))),
+    set((state) => {
+      if (state.sessions[sessionId]?.cwd === cwd) return state
+      return { ...updateSession(state, sessionId, () => ({ cwd })), isDirty: true }
+    }),
 
   setSessionMode: (sessionId, mode) =>
     set((state) => updateSession(state, sessionId, () => ({ mode }))),
 
   addBlock: (sessionId, block) =>
-    set((state) => updateSession(state, sessionId, (session) => ({
+    set((state) => ({ ...updateSession(state, sessionId, (session) => ({
       blocks: [...session.blocks, block],
-    }))),
+    })), isDirty: true })),
 
   appendSegments: (sessionId, blockId, segments) => {
-    set((state) => updateBlock(state, sessionId, blockId, (b) => {
-      const newSegments = [...b.segments, ...segments]
-      const newLines = appendToLines(b.lines, segments)
-      return {
-        segments: newSegments,
-        lines: newLines,
+    set((state) => {
+      const maxLines = state.config?.scrollback?.max_lines ?? 10000
+      const updated = updateBlock(state, sessionId, blockId, (b) => ({
+        segments: [...b.segments, ...segments],
+        lines: appendToLines(b.lines, segments),
+      }))
+      // Trim scrollback in the same set() call
+      const sessions = (updated as { sessions: typeof state.sessions }).sessions ?? state.sessions
+      const session = sessions[sessionId]
+      if (session) {
+        const trimmed = trimScrollback(session.blocks, maxLines)
+        if (trimmed !== session.blocks) {
+          return { ...updated, isDirty: true, sessions: { ...sessions, [sessionId]: { ...session, blocks: trimmed } } }
+        }
       }
-    }))
-
-    // Trim scrollback after new output arrives
-    const maxLines = get().config?.scrollback?.max_lines ?? 10000
-    const session = get().sessions[sessionId]
-    if (session) {
-      const trimmed = trimScrollback(session.blocks, maxLines)
-      if (trimmed !== session.blocks) {
-        set((state) => updateSession(state, sessionId, () => ({ blocks: trimmed })))
-      }
-    }
+      return { ...updated, isDirty: true }
+    })
   },
 
   completeBlock: (sessionId, blockId, exitCode, duration) =>
-    set((state) => updateBlock(state, sessionId, blockId, () => ({
+    set((state) => ({ ...updateBlock(state, sessionId, blockId, () => ({
       status: exitCode === 0 ? ('success' as const) : ('error' as const),
       exitCode,
       duration,
-    }))),
+    })), isDirty: true })),
 
   // Session management actions
 
@@ -461,8 +489,158 @@ export const useStore = create<AppState>((set, get) => ({
     set((state) => ({ switcherRunningOnly: !state.switcherRunningOnly })),
 
   // Command palette
-  setPaletteOpen: (open) => set({ paletteOpen: open }),
+  setPaletteOpen: (open) => set({ paletteOpen: open, ...(open ? {} : { paletteMode: 'commands' as const }) }),
+  setPaletteMode: (mode) => set({ paletteMode: mode }),
+  setTheme: (theme) => set({ theme }),
   setTriggerRename: (trigger) => set({ triggerRename: trigger }),
+
+  // Update
+  setUpdateAvailable: (update) => set({ updateAvailable: update }),
+
+  // Persistence
+  saveState: async () => {
+    const state = get()
+    if (!state.isDirty) return
+    const maxBlocks = state.config?.persistence?.max_blocks_per_session ?? 50
+
+    const sessions = Object.values(state.sessions).map((session) => {
+      const completedBlocks = session.blocks
+        .filter((b) => b.status !== 'running')
+        .slice(-maxBlocks)
+
+      return {
+        name: session.name,
+        cwd: session.cwd,
+        blocks: completedBlocks.map((b) => ({
+          id: b.id,
+          command: b.command,
+          cwd: b.cwd,
+          timestamp: b.timestamp,
+          exit_code: b.exitCode ?? null,
+          duration: b.duration ?? null,
+          status: b.status,
+          segments: b.segments.map((s) => ({
+            text: s.text,
+            fg: s.style.fg ?? null,
+            bg: s.style.bg ?? null,
+            bold: s.style.bold ?? false,
+            italic: s.style.italic ?? false,
+            underline: s.style.underline ?? false,
+            dim: s.style.dim ?? false,
+          })),
+        })),
+        command_history: session.commandHistory,
+      }
+    })
+
+    const persisted = {
+      windows: [{
+        x: 0,
+        y: 0,
+        width: window.innerWidth,
+        height: window.innerHeight,
+        sessions,
+        active_session_index: Math.max(0,
+          Object.keys(state.sessions).indexOf(state.activeSessionId ?? ''),
+        ),
+      }],
+    }
+
+    try {
+      await invoke('save_session_state', { state: JSON.stringify(persisted) })
+      set({ isDirty: false })
+    } catch (e) {
+      console.error('Failed to save session state:', e)
+    }
+  },
+
+  restoreState: (json: string) => {
+    try {
+      const data = JSON.parse(json)
+      if (!data?.windows?.length) return
+
+      const win = data.windows[0]
+      if (!win?.sessions?.length) return
+
+      const sessions: Record<string, Session> = {}
+      const sessionOrder: string[] = []
+      let counter = 0
+
+      for (const ps of win.sessions) {
+        const id = crypto.randomUUID()
+        counter++
+        sessionOrder.push(id)
+
+        const blocks: Block[] = (ps.blocks ?? []).map((pb: Record<string, unknown>) => {
+          const status = pb.status === 'running' ? 'error' : pb.status as string
+          const exitCode = pb.status === 'running' ? -1 : (pb.exit_code as number | undefined)
+
+          const segments: StyledSegment[] = ((pb.segments as Array<Record<string, unknown>>) ?? []).map((s) => ({
+            text: s.text as string,
+            style: {
+              fg: (s.fg as string) || undefined,
+              bg: (s.bg as string) || undefined,
+              bold: (s.bold as boolean) || false,
+              italic: (s.italic as boolean) || false,
+              underline: (s.underline as boolean) || false,
+              dim: (s.dim as boolean) || false,
+            },
+          }))
+
+          const lines: StyledSegment[][] = []
+          let currentLine: StyledSegment[] = []
+          for (const seg of segments) {
+            const parts = seg.text.split('\n')
+            for (let i = 0; i < parts.length; i++) {
+              if (i > 0) {
+                lines.push(currentLine)
+                currentLine = []
+              }
+              if (parts[i]) {
+                currentLine.push({ text: parts[i], style: seg.style })
+              }
+            }
+          }
+          if (currentLine.length > 0) {
+            lines.push(currentLine)
+          }
+
+          return {
+            id: pb.id as string,
+            command: pb.command as string,
+            cwd: pb.cwd as string,
+            timestamp: pb.timestamp as number,
+            status: status as Block['status'],
+            exitCode,
+            duration: pb.duration as number | undefined,
+            segments,
+            lines,
+          }
+        })
+
+        sessions[id] = {
+          id,
+          name: ps.name ?? `Session ${counter}`,
+          blocks,
+          mode: 'normal',
+          cwd: ps.cwd ?? '~',
+          commandHistory: ps.command_history ?? [],
+          historyIndex: -1,
+          historyDraft: '',
+        }
+      }
+
+      const activeIndex = Math.min(win.active_session_index ?? 0, sessionOrder.length - 1)
+      set({
+        sessions,
+        sessionOrder,
+        activeSessionId: sessionOrder[activeIndex] ?? null,
+        sessionCounter: counter,
+      })
+    } catch (e) {
+      console.error('Failed to restore session state:', e)
+    }
+  },
 
   clearSessionOutput: () =>
     set((state) => {

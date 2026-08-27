@@ -40,6 +40,16 @@ Each session maintains:
 
 Background sessions continue running commands even when not visible. The session switcher shows a green dot next to sessions with active commands.
 
+## Session Persistence
+
+Session state is automatically saved every 30 seconds and when the app closes. On next launch, your sessions are restored with their command history and output blocks intact.
+
+- Only completed blocks are saved (up to 50 per session by default, configurable via `[persistence] max_blocks_per_session`).
+- Commands that were still running when the app closed appear with an error status on restore.
+- A fresh shell process is created on launch -- persisted sessions preserve history and output but not live shell state (environment variables, background jobs, etc.).
+
+Persisted state is stored in `~/.config/kiln/state/session_state.msgpack`.
+
 ## Error Recovery
 
 If a session's shell process crashes or exits unexpectedly:

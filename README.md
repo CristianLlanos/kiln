@@ -14,10 +14,15 @@ When you need a full terminal (vim, htop, ssh), Kiln detects it automatically an
 
 - **Block-based output** -- each command+output is a visual card with status, duration, and exit code
 - **Styled ANSI rendering** -- colors and formatting rendered as native DOM text, not a terminal grid
+- **Rich previews** -- JSON (collapsible tree), diff, CSV/TSV (table), Markdown (with syntax-highlighted code blocks), column-aligned tables
 - **Interactive mode** -- seamless switch to embedded xterm.js for TUI programs (vim, htop, ssh)
 - **Session management** -- multiple sessions per window, switch with `Cmd+E` fuzzy finder
+- **Session persistence** -- windows, sessions, and command history restored on launch
+- **Theming** -- dark and light built-in themes, custom `.toml` theme files
+- **Autocomplete** -- filesystem paths + shell history, keyboard-navigable dropdown
+- **Notifications** -- OS notifications when long-running commands finish in the background
+- **Auto-updater** -- checks GitHub Releases, subtle header badge when updates are available
 - **Keyboard-first** -- command palette (`Cmd+P`), session switcher (`Cmd+E`), search (`Cmd+F`)
-- **Dark theme** -- Kotlin-inspired color palette, designed for long sessions
 - **Privacy-first** -- no accounts, no telemetry, no cloud
 
 ### Platform Support
@@ -68,6 +73,8 @@ Kiln uses a dual-mode architecture built on Tauri v2:
 - **Styling:** Tailwind CSS
 - **State:** Zustand
 - **Terminal fallback:** xterm.js
+- **Markdown:** markdown-it + highlight.js
+- **Persistence:** MessagePack
 - **Package manager:** pnpm
 
 ## Documentation

@@ -1,5 +1,6 @@
 use base64::Engine;
 use crate::config;
+use crate::persistence;
 use crate::session::SessionManager;
 use crate::shell_integration;
 use tauri::{Emitter, State, WebviewUrl, WebviewWindowBuilder};
@@ -165,12 +166,66 @@ pub fn interactive_ready(
 }
 
 #[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    let expanded = if path.starts_with("~/") {
+        dirs::home_dir()
+            .map(|h| h.join(&path[2..]).to_string_lossy().to_string())
+            .unwrap_or(path)
+    } else {
+        path
+    };
+    open_with_system(&expanded)
+}
+
+#[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
     // Only allow http/https URLs to prevent arbitrary file/app execution
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return Err(format!("Refused to open non-HTTP URL: {}", url));
     }
     open_with_system(&url)
+}
+
+#[tauri::command]
+pub fn get_theme(name: String) -> Result<crate::theme::KilnTheme, String> {
+    crate::theme::load_theme(&name)
+}
+
+#[tauri::command]
+pub fn list_themes() -> Vec<String> {
+    crate::theme::list_themes()
+}
+
+#[tauri::command]
+pub fn set_theme(name: String) -> Result<(), String> {
+    // Validate the theme exists first
+    crate::theme::load_theme(&name)?;
+
+    // Read the config file, update appearance.theme, and write back
+    let path = crate::config::config_path();
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+
+    // Parse as a TOML table to preserve formatting as much as possible
+    let mut doc: toml::Table = toml::from_str(&contents)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+    // Ensure [appearance] table exists
+    let appearance = doc
+        .entry("appearance")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+
+    if let toml::Value::Table(ref mut table) = appearance {
+        table.insert("theme".to_string(), toml::Value::String(name));
+    }
+
+    let new_contents = toml::to_string_pretty(&doc)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    std::fs::write(&path, new_contents)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -185,4 +240,19 @@ pub fn check_shell_integration(shell: Option<String>) -> ShellIntegrationStatus 
         in_rc: shell_integration::is_installed_in_rc_for_shell(&shell_name),
         shell: shell_name,
     }
+}
+
+// ── Session persistence commands ───────────────────────────────────────────
+
+#[tauri::command]
+pub fn save_session_state(state: String) -> Result<(), String> {
+    let persisted: persistence::PersistedState =
+        serde_json::from_str(&state).map_err(|e| format!("Failed to parse state JSON: {}", e))?;
+    persistence::save_state(&persisted)
+}
+
+#[tauri::command]
+pub fn load_session_state() -> Option<String> {
+    let state = persistence::load_state()?;
+    serde_json::to_string(&state).ok()
 }

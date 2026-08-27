@@ -234,8 +234,83 @@ Persistent PTY is proven (Warp, iTerm2, VS Code all use shell integration). The 
 
 **Why:** `Ctrl+L` is the universal terminal keybinding for clearing the screen. Every developer expects it to work. Not having it is a guaranteed friction point.
 
-## D34: Circular arrow navigation in overlays
+## D34: Circular arrow navigation in overlays (Phase 2.5)
 
 **Decision:** ArrowDown at the bottom of the list wraps to the top. ArrowUp at the top wraps to the bottom. Applies to both the command palette and session switcher.
 
 **Why:** Clamping at boundaries (the current `Math.min`/`Math.max` behavior) forces users to reverse direction to reach items at the other end of the list. Circular navigation is standard in dropdown menus, command palettes (VS Code, JetBrains), and autocomplete. It's a small change with outsized impact on keyboard flow.
+
+---
+
+# Phase 3 Decisions
+
+## D35: Theme files over TOML config overrides
+
+**Decision:** Themes are defined as `.kiln-theme` TOML files with a `[colors]` section (UI palette) and `[terminal]` section (ANSI 16 colors for xterm.js). Built-in themes ship as Tauri resources in the same format. User themes go in `~/.config/kiln/themes/`. Config references themes by name: `appearance.theme = "kiln-dark"`.
+
+**Why:** We considered three approaches:
+- **Two built-in themes, no customization** — too limiting, no escape hatch for power users
+- **TOML config overrides** (partial palette in `kiln.toml`) — requires defining inheritance logic, fallback resolution, and a theme schema embedded in the config. Mixes user-edited config with theme data.
+- **Theme files** — clean separation. Built-in and custom themes use the same format. No inheritance complexity. The config just points to a name.
+
+Theme files also open the door to community sharing later without any architectural changes.
+
+## D36: Full-spec themes, no inheritance
+
+**Decision:** Every `.kiln-theme` file must define all color keys. Missing keys are a validation error, not a fallback.
+
+**Why:** Partial themes require a "base theme" concept — which theme do you inherit from? This adds merge logic, documentation for every possible override, and subtle bugs when a base theme changes. Full-spec is simple: copy a built-in theme file, change what you want, done. The built-in themes serve as copy-paste templates.
+
+## D37: "Switch Theme..." palette action, not a toggle
+
+**Decision:** Command palette shows "Switch Theme..." which lists all available themes (built-in + user). No separate "Toggle Theme" action. Selection persists to `kiln.toml`.
+
+**Why:** A toggle only works for two themes. The moment a user adds a custom theme, toggle becomes ambiguous ("toggle between which two?"). A list scales to any number of themes and is discoverable. Persisting to config means the choice survives restarts and is visible in the config file.
+
+## D38: Session persistence with limited block restore
+
+**Decision:** On quit and every ~30 seconds, persist window state (position, size) and session state (name, cwd, active session, last 50 blocks with styled output) to MessagePack files in `~/.config/kiln/state/`. On launch, restore everything. Commands that were running at quit time restore with `interrupted` status.
+
+**Why:** We considered metadata-only restore (just reopen sessions in the right directories) vs. full restore with block history. The value of seeing your last few commands ("where was I?") justified the extra complexity. The 50-block cap keeps file sizes manageable. MessagePack over JSON because this is machine-managed state — nobody hand-edits it, and binary serialization is faster/smaller for thousands of StyledSegments.
+
+**Alternatives considered:**
+- Metadata only (no blocks) — loses the "context recovery" value
+- Unlimited blocks — state files could grow to hundreds of MB for long sessions
+- JSON storage — human-readable but ~2-3x larger, slower to serialize styled output
+
+## D39: Auto-save every 30 seconds for crash protection
+
+**Decision:** Persist state to disk every ~30 seconds while running, in addition to clean quit. This protects against crashes and force-quits losing all session state.
+
+**Why:** Saving only on clean quit means a crash or `kill -9` loses everything. 30-second intervals are infrequent enough to have negligible performance impact but frequent enough that you lose at most ~30 seconds of state.
+
+## D40: OS notifications for long-running commands
+
+**Decision:** When a command takes longer than 10 seconds (configurable) and the Kiln window is not focused, send an OS notification on completion. Notification shows command name, duration, and success/error status. Clicking the notification focuses Kiln and scrolls to the block. Enabled by default (opt-out via `notifications.enabled = false`).
+
+**Why:** This is universally useful — you run `pnpm build`, switch to your editor, and get notified when it's done. The 10-second threshold filters out trivial commands. Only notifying when unfocused avoids redundant alerts. Opt-out is the right default because the feature has no downside for users who don't actively dislike notifications.
+
+**Implementation:** Uses `tauri-plugin-notification` for native OS notifications. Check happens in Rust when `block_complete` fires.
+
+## D41: Auto-updater with header badge
+
+**Decision:** Check for updates on launch and every 24 hours while running. If a new version is available, show a subtle badge in the header: "Update available (vX.Y.Z)". Click to download in background. When ready, show "Restart to update" — no auto-restart. Uses `tauri-plugin-updater` with GitHub Releases. Stable channel only. Config: `updates.check_on_launch = true`.
+
+## D42: highlight.js for markdown code blocks
+
+**Decision:** Add `highlight.js` to the markdown preview renderer for syntax-highlighted fenced code blocks. Ship a curated set of ~17 common languages (js, ts, python, rust, go, java, bash, json, yaml, toml, sql, css, html, diff, markdown, c, cpp). Use a highlight.js theme that matches the active Kiln theme — detect dark vs. light based on background luminance for custom themes.
+
+**Why:** Markdown previews already exist but code blocks render as plain monospace text. For a tool aimed at developers, unstyled code blocks feel broken. highlight.js is lightweight (~30KB core + selective language loading), battle-tested, and auto-detects language when no fence tag is specified. A curated language set keeps the bundle small while covering what developers actually paste/pipe.
+
+**Alternatives considered:**
+- Shiki (VS Code's highlighter) — better accuracy but heavier (~2MB with grammars), uses TextMate grammars via WASM. Overkill for preview blocks.
+- Prism.js — similar to highlight.js but less maintained. highlight.js has broader language coverage and more active development.
+
+---
+
+**Why:** We considered three notification approaches:
+- **Header badge** — unobtrusive, always visible, user acts when ready. Fits the minimal chrome philosophy.
+- **System notification** — easy to dismiss and forget. No persistent reminder.
+- **Command palette only** — too hidden, users would never discover updates.
+
+On launch + 24h periodic covers both short sessions (check on launch) and long-running sessions (periodic). No auto-restart because interrupting a user's work is unacceptable.

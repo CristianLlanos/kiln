@@ -1,9 +1,13 @@
 import { useStore } from '../store'
 import type { Block, SessionMode } from '../store/types'
 
+// Stable empty array — avoids creating a new [] on every selector call,
+// which would cause Zustand's Object.is check to fail and trigger re-renders.
+const EMPTY_BLOCKS: Block[] = []
+
 export function useActiveSessionBlocks(): Block[] {
   return useStore((s) =>
-    s.activeSessionId ? (s.sessions[s.activeSessionId]?.blocks ?? []) : []
+    s.activeSessionId ? (s.sessions[s.activeSessionId]?.blocks ?? EMPTY_BLOCKS) : EMPTY_BLOCKS
   )
 }
 

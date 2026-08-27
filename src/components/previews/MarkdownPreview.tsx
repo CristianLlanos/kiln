@@ -1,91 +1,73 @@
 import { memo, useMemo } from 'react'
+import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
+import typescript from 'highlight.js/lib/languages/typescript'
+import python from 'highlight.js/lib/languages/python'
+import rust from 'highlight.js/lib/languages/rust'
+import go from 'highlight.js/lib/languages/go'
+import java from 'highlight.js/lib/languages/java'
+import bash from 'highlight.js/lib/languages/bash'
+import json from 'highlight.js/lib/languages/json'
+import yaml from 'highlight.js/lib/languages/yaml'
+import xml from 'highlight.js/lib/languages/xml'
+import css from 'highlight.js/lib/languages/css'
+import sql from 'highlight.js/lib/languages/sql'
+import diff from 'highlight.js/lib/languages/diff'
+import mdLang from 'highlight.js/lib/languages/markdown'
+import c from 'highlight.js/lib/languages/c'
+import cpp from 'highlight.js/lib/languages/cpp'
 
-/**
- * Minimal markdown to HTML converter. Escapes HTML first, then applies
- * markdown transforms. No dangerouslySetInnerHTML with user content.
- */
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('js', javascript)
+hljs.registerLanguage('typescript', typescript)
+hljs.registerLanguage('ts', typescript)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('py', python)
+hljs.registerLanguage('rust', rust)
+hljs.registerLanguage('go', go)
+hljs.registerLanguage('java', java)
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('sh', bash)
+hljs.registerLanguage('shell', bash)
+hljs.registerLanguage('zsh', bash)
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('yaml', yaml)
+hljs.registerLanguage('yml', yaml)
+hljs.registerLanguage('toml', yaml)
+hljs.registerLanguage('xml', xml)
+hljs.registerLanguage('html', xml)
+hljs.registerLanguage('css', css)
+hljs.registerLanguage('sql', sql)
+hljs.registerLanguage('diff', diff)
+hljs.registerLanguage('markdown', mdLang)
+hljs.registerLanguage('md', mdLang)
+hljs.registerLanguage('c', c)
+hljs.registerLanguage('cpp', cpp)
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function markdownToHtml(text: string): string {
-  // First escape all HTML
-  let html = escapeHtml(text)
-
-  // Code blocks (must be before inline code)
-  html = html.replace(
-    /```(\w*)\n([\s\S]*?)```/g,
-    (_match, _lang: string, code: string) =>
-      `<pre class="bg-surface-raised rounded p-3 my-2 text-sm overflow-x-auto"><code>${code.trim()}</code></pre>`,
-  )
-
-  // Inline code
-  html = html.replace(
-    /`([^`]+)`/g,
-    '<code class="bg-surface-raised rounded px-1 py-0.5 text-sm">$1</code>',
-  )
-
-  // Headings
-  html = html.replace(/^######\s+(.+)$/gm, '<h6 class="text-sm font-semibold mt-3 mb-1 text-text-primary">$1</h6>')
-  html = html.replace(/^#####\s+(.+)$/gm, '<h5 class="text-sm font-semibold mt-3 mb-1 text-text-primary">$1</h5>')
-  html = html.replace(/^####\s+(.+)$/gm, '<h4 class="text-base font-semibold mt-3 mb-1 text-text-primary">$1</h4>')
-  html = html.replace(/^###\s+(.+)$/gm, '<h3 class="text-lg font-semibold mt-4 mb-1 text-text-primary">$1</h3>')
-  html = html.replace(/^##\s+(.+)$/gm, '<h2 class="text-xl font-bold mt-4 mb-2 text-text-primary">$1</h2>')
-  html = html.replace(/^#\s+(.+)$/gm, '<h1 class="text-2xl font-bold mt-4 mb-2 text-text-primary">$1</h1>')
-
-  // Bold and italic
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
-
-  // Links (already escaped, so use &amp; aware patterns)
-  html = html.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a class="text-accent underline" href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
-  )
-
-  // Blockquotes
-  html = html.replace(
-    /^&gt;\s+(.+)$/gm,
-    '<blockquote class="border-l-2 border-accent pl-3 my-1 text-text-secondary italic">$1</blockquote>',
-  )
-
-  // Unordered lists
-  html = html.replace(
-    /^[-*]\s+(.+)$/gm,
-    '<li class="ml-4 list-disc text-text-primary">$1</li>',
-  )
-
-  // Ordered lists
-  html = html.replace(
-    /^\d+\.\s+(.+)$/gm,
-    '<li class="ml-4 list-decimal text-text-primary">$1</li>',
-  )
-
-  // Horizontal rule
-  html = html.replace(/^---+$/gm, '<hr class="border-border my-3" />')
-
-  // Paragraphs: wrap remaining lines that aren't already wrapped in block elements
-  html = html.replace(
-    /^(?!<[huplbao]|<li|<pre|<code|<hr|<block)(.+)$/gm,
-    '<p class="my-1">$1</p>',
-  )
-
-  return html
-}
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: false,
+  highlight(str, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        return hljs.highlight(str, { language: lang }).value
+      } catch { /* fall through */ }
+    }
+    try {
+      return hljs.highlightAuto(str).value
+    } catch { /* fall through */ }
+    return ''
+  },
+})
 
 export const MarkdownPreview = memo(function MarkdownPreview({ text }: { text: string }) {
-  const html = useMemo(() => markdownToHtml(text), [text])
+  const html = useMemo(() => md.render(text), [text])
 
   return (
     <div
-      className="px-4 text-sm leading-relaxed font-mono markdown-preview"
+      className="px-4 text-sm leading-relaxed font-mono markdown-preview hljs-kiln"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )

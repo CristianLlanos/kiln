@@ -40,7 +40,7 @@ After the first launch, Kiln checks whether shell integration is already install
 In block mode, Kiln automatically detects URLs and file paths in command output:
 
 - **URLs** (`https://...`, `http://...`, `ftp://...`, `file://...`) are rendered as clickable links that open in your default browser.
-- **File paths** (absolute paths like `/src/main.rs:42:5`, relative paths like `./foo`, `~/config`) are rendered as clickable links that copy the path to your clipboard on click.
+- **File paths** (absolute paths like `/src/main.rs:42:5`, relative paths like `./foo`, `~/config`) are rendered as clickable links that open the file with your system's default application.
 
 Links are styled with an accent-colored underline and do not interfere with text selection.
 
@@ -53,10 +53,10 @@ Supported formats:
 - **JSON** -- syntax-highlighted view with a collapsible tree (expand/collapse objects and arrays)
 - **Git diff** -- added lines in green, removed lines in red, hunk headers highlighted
 - **CSV / TSV** -- rendered as a table with headers and zebra striping
-- **Markdown** -- rendered with headings, code blocks, bold, italic, links, and lists
+- **Markdown** -- rendered with headings, syntax-highlighted code blocks (17 languages via highlight.js), bold, italic, links, and lists
 - **Column-aligned output** (e.g. `docker ps`, `ls -l`) -- parsed into a proper table
 
-Previews are opt-in per block. The default view is always the raw output. Click **Preview** to switch to the rich view, and **Raw** to switch back. Preview state is per-block and does not persist across sessions.
+Previews are shown by default when structured content is detected. Click **Raw** to switch to plain output, and **Preview** to switch back. Set `appearance.previews = false` in config to disable previews globally. Previews are automatically skipped for outputs larger than 100KB.
 
 ## Reversibility
 
